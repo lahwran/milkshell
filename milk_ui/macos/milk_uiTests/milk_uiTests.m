@@ -17,11 +17,11 @@
 #define TIMEOUT_SECONDS 60
 #define TEXT_TO_LOOK_FOR @"Welcome to React Native macOS!"
 
-@interface rnmacTests : XCTestCase
+@interface milk_uiTests : XCTestCase
 
 @end
 
-@implementation rnmacTests
+@implementation milk_uiTests
 
 - (BOOL)findSubviewInView:(NSView *)view matching:(BOOL(^)(NSView *view))test
 {

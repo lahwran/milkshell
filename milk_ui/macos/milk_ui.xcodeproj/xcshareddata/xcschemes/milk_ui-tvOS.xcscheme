@@ -29,9 +29,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "2D02E47A1E0B4A5D006451C7"
-               BuildableName = "rnmac-tvOS.app"
-               BlueprintName = "rnmac-tvOS"
-               ReferencedContainer = "container:rnmac.xcodeproj">
+               BuildableName = "milk_ui-tvOS.app"
+               BlueprintName = "milk_ui-tvOS"
+               ReferencedContainer = "container:milk_ui.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
          <BuildActionEntry
@@ -43,9 +43,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "2D02E48F1E0B4A5D006451C7"
-               BuildableName = "rnmac-tvOSTests.xctest"
-               BlueprintName = "rnmac-tvOSTests"
-               ReferencedContainer = "container:rnmac.xcodeproj">
+               BuildableName = "milk_ui-tvOSTests.xctest"
+               BlueprintName = "milk_ui-tvOSTests"
+               ReferencedContainer = "container:milk_ui.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -61,9 +61,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "2D02E48F1E0B4A5D006451C7"
-               BuildableName = "rnmac-tvOSTests.xctest"
-               BlueprintName = "rnmac-tvOSTests"
-               ReferencedContainer = "container:rnmac.xcodeproj">
+               BuildableName = "milk_ui-tvOSTests.xctest"
+               BlueprintName = "milk_ui-tvOSTests"
+               ReferencedContainer = "container:milk_ui.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -71,9 +71,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "2D02E47A1E0B4A5D006451C7"
-            BuildableName = "rnmac-tvOS.app"
-            BlueprintName = "rnmac-tvOS"
-            ReferencedContainer = "container:rnmac.xcodeproj">
+            BuildableName = "milk_ui-tvOS.app"
+            BlueprintName = "milk_ui-tvOS"
+            ReferencedContainer = "container:milk_ui.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <AdditionalOptions>
@@ -94,9 +94,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "2D02E47A1E0B4A5D006451C7"
-            BuildableName = "rnmac-tvOS.app"
-            BlueprintName = "rnmac-tvOS"
-            ReferencedContainer = "container:rnmac.xcodeproj">
+            BuildableName = "milk_ui-tvOS.app"
+            BlueprintName = "milk_ui-tvOS"
+            ReferencedContainer = "container:milk_ui.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <AdditionalOptions>
@@ -113,9 +113,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "2D02E47A1E0B4A5D006451C7"
-            BuildableName = "rnmac-tvOS.app"
-            BlueprintName = "rnmac-tvOS"
-            ReferencedContainer = "container:rnmac.xcodeproj">
+            BuildableName = "milk_ui-tvOS.app"
+            BlueprintName = "milk_ui-tvOS"
+            ReferencedContainer = "container:milk_ui.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

@@ -36,7 +36,7 @@
     [[self window] setTitlebarAppearsTransparent:YES];
     
     [windowController setShouldCascadeWindows:NO];
-    [windowController setWindowFrameAutosaveName:@"rnmac"];
+    [windowController setWindowFrameAutosaveName:@"milk_ui"];
 
     [windowController showWindow:self.window];
 
@@ -53,7 +53,7 @@
   jsCodeLocation = [[RCTBundleURLProvider sharedSettings] jsBundleURLForBundleRoot:@"index" fallbackResource:nil];
 
   RCTRootView *rootView = [[RCTRootView alloc] initWithBundleURL:jsCodeLocation
-                                                      moduleName:@"rnmac"
+                                                      moduleName:@"milk_ui"
                                                initialProperties:nil
                                                    launchOptions:@{@"argv": [self argv]}];
   rootView.material = NSVisualEffectMaterialAppearanceBased;
@@ -65,7 +65,7 @@
   NSMenuItem *containerItem = [[NSMenuItem alloc] init];
   NSMenu *rootMenu = [[NSMenu alloc] initWithTitle:@"" ];
   [containerItem setSubmenu:rootMenu];
-  [rootMenu addItemWithTitle:@"Quit rnmac" action:@selector(terminate:) keyEquivalent:@"q"];
+  [rootMenu addItemWithTitle:@"Quit milk_ui" action:@selector(terminate:) keyEquivalent:@"q"];
   [[NSApp mainMenu] addItem:containerItem];
 }
 
