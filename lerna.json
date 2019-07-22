@@ -1,0 +1,7 @@
+{
+  "packages": [
+    "packages/*", "milky_ui*"
+  ],
+  "npmClient": "yarn",
+  "version": "0.0.0"
+}
