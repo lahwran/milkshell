@@ -24,6 +24,18 @@ import {
   ReloadInstructions,
 } from './NewAppScreen/index';
 
+// TODO: POTENTIAL SECURITY VULNERABILITY
+// remote code can invoke any attribute of funcs :s
+// how 2 hashmap
+
+function reactFromTaggedJson({type, val}, streamdispatch) {
+  switch (json.type) {
+    case 'stream': return (params) => streamdispatch(params)
+    case 'view': return <View ...{}/>
+    case 'seq': return val
+  }
+}
+
 const App = () => {
   return (
     <Fragment>
@@ -33,11 +45,6 @@ const App = () => {
           contentInsetAdjustmentBehavior="automatic"
           style={styles.scrollView}>
           <Header />
-          {global.HermesInternal == null ? null : (
-            <View style={styles.engine}>
-              <Text style={styles.footer}>Engine: Hermes</Text>
-            </View>
-          )}
           <View style={styles.body}>
             <View style={styles.sectionContainer}>
               <Text style={styles.sectionTitle}>Step One</Text>
@@ -61,9 +68,12 @@ const App = () => {
             </View>
             <LearnMoreLinks />
           </View>
+    <View>
+      <Text> hi </Text>
+    </View>
         </ScrollView>
       </SafeAreaView>
-    </Fragment>
+      </Fragment>
   );
 };
 
