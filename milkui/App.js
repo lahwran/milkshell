@@ -6,7 +6,7 @@
  * @flow
  */
 
-import React, {Fragment} from 'react';
+import React, {Fragment, useState} from 'react';
 import {
   SafeAreaView,
   StyleSheet,
@@ -48,6 +48,11 @@ function handler(instantiate, attrs) {
 
 class UnpackException extends Error {}
 
+function RemoteTextInput({value, onChange}) {
+  const [vState, setVState] = useState(value);
+  return <TextInput value={vState} onChangeText={(newValue) => {setVState(newValue); onChange(newValue)}}/>
+}
+
 // type specifications
 const unpack = {
   integer: (val) => parseInt(val),
@@ -61,7 +66,7 @@ const unpack = {
     if (!handler || !handler.isHandler) { throw new UnpackException(`nonexistant type: '${type}'`) }
     const unpacked_val = handler.unpacker(val, sd);
     console.log(`unpack "${type}"`, val, sd, typehandlers, "unpacked val:", unpacked_val)
-    return handler.instantiate(unpacked_val);
+    return handler.instantiate(unpacked_val, sd);
   }
 }
 
@@ -91,11 +96,15 @@ const typehandlers = {
   stream__type: handler((params, streamdispatch) => (message) => streamdispatch(params, message), [
     ["sid", wrappers.required(unpack.integer)]
   ]),
-  view__type: handler(({children, ...p}) => <View {...p}>{children}</View>, [
+  view__type: handler(({...p}) => <View {...p}/>, [
     ["children", wrappers.optional(unpack.array)]
   ]),
   plaintext__type: handler(({value}) => <Text style={styles.sectionDescription}>{value}</Text>, [
     ["value", wrappers.required(unpack.string)]
+  ]),
+  textinput__type: handler((p) => <RemoteTextInput {...p}/>, [
+    ["value", wrappers.required(unpack.string)],
+    ["onChange", wrappers.required(unpack.tagged)],
   ]),
   //string__type: handler(({value}) => <Text>{value}</Text>, [
   //  ["value", wrappers.required(unpack.string)]
@@ -157,7 +166,8 @@ const streamdispatch = (arg1, arg2) => console.log(arg1, arg2)
 const App = () => {
   const tree = ["view", {
     "children": [
-      ["plaintext", {value: "hello world"}]
+      ["plaintext", {value: "hello world"}],
+      ["textinput", {value: "derp", onChange: ["stream", {sid: 1}]}]
     ]
   }];
   return <Fragment>
