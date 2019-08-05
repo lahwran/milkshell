@@ -1,0 +1,7 @@
+{
+  "name": "milkui",
+  "displayName": "milkui",
+  "expo": {
+        "platforms": ["web"]
+    }
+}
