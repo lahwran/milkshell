@@ -1,7 +1,8 @@
 ###### Milkshell: Smooth computing. Just add milk!🥛 🍶
 
 
-erlang: `rebar3 compile`
+to run erlang portion for dev: `rebar3 shell`
+right now, that will launch localhost:8080 saying "hello world". stay tuned...
 
 mac setup:
 
