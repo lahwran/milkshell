@@ -6,7 +6,7 @@
  * @flow
  */
 
-import React, {Fragment, useState, useReducer} from 'react';
+import React, {Fragment, useState, useCallback, useReducer} from 'react';
 import {
   SafeAreaView,
   StyleSheet,
@@ -168,23 +168,46 @@ const typehandlers = {
 function wsreducer(state, action) {
   console.log(action)
   switch (action.type) {
+    case 'changeValue': return {...state, value: action.value};
     case 'open': return {...state, meta: [...state.meta, ["open", action.timeStamp]]};
-    case 'message': return {...state, messages: [...state.messages, action.data]};
-    case 'close': return {...state, meta: [...state.meta, ["close", action.value]]};
+    case 'message':
+      switch (action.data.type) {
+        case 'parsed':
+          return {...state, parsed: action.data.value};
+        default:
+          return {...state, messages: [...state.messages, action.data]};
+
+      }
+    case 'close':
+      return {
+        ...state,
+        meta: [...state.meta, ["close", action.value]],
+
+      };
     case 'error': return {...state, meta: [...state.meta, ["error", action.value]]};
   }
 }
 function WsTest() {
-  const [state, dispatch] = useReducer(wsreducer, {meta: [], messages: []});
+  const [state, dispatch] = useReducer(wsreducer, {meta: [], messages: [], value: ''});
+
   const wsinfo = useWebSocketCustom("ws://localhost:8080/websocket", {
     onMessage: ({data}) => dispatch({type: 'message', data: JSON.parse(data)}),
     onError: event => dispatch({type: 'error', event}),
     onOpen: ({timeStamp}) => dispatch({type: 'open', timeStamp}),
-    onClose: event => dispatch({type: 'close', event})
+    onClose: event => {
+      dispatch({type: 'close', event})
+    }
+  });
+  const handleChange = useCallback(event => {
+    const value = event.target.value;
+    console.log(value);
+    wsinfo.send(value);
+    dispatch({type: 'changeValue', value});
   });
   return <>
+      <TextInput onChange={handleChange} value={state.value}/>
       <Text>{JSON.stringify(state)}</Text>
-      <Button onPress={() => wsinfo.send({"hello": "there"})} title="derp"/>
+      <Button onPress={() => wsinfo.send("[1,2,3]")} title="derp"/>
   </>
 }
 
