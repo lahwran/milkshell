@@ -6,7 +6,7 @@
  * @flow
  */
 
-import React, {Fragment, useState} from 'react';
+import React, {Fragment, useState, useReducer} from 'react';
 import {
   SafeAreaView,
   StyleSheet,
@@ -15,6 +15,7 @@ import {
   Text,
   TextInput,
   StatusBar,
+  Button,
 } from 'react-native';
 
 import {
@@ -24,6 +25,8 @@ import {
   DebugInstructions,
   ReloadInstructions,
 } from './NewAppScreen/index';
+
+import useWebSocketCustom from './ws'
 
 // TODO: POTENTIAL SECURITY VULNERABILITY
 // remote code can invoke any attribute of funcs :s
@@ -160,7 +163,30 @@ const typehandlers = {
         </ScrollView>
       </SafeAreaView>
     </Fragment>
-    )*/
+)*/
+
+function wsreducer(state, action) {
+  console.log(action)
+  switch (action.type) {
+    case 'open': return {...state, meta: [...state.meta, ["open", action.timeStamp]]};
+    case 'message': return {...state, messages: [...state.messages, action.data]};
+    case 'close': return {...state, meta: [...state.meta, ["close", action.value]]};
+    case 'error': return {...state, meta: [...state.meta, ["error", action.value]]};
+  }
+}
+function WsTest() {
+  const [state, dispatch] = useReducer(wsreducer, {meta: [], messages: []});
+  const wsinfo = useWebSocketCustom("ws://localhost:8080/websocket", {
+    onMessage: ({data}) => dispatch({type: 'message', data: JSON.parse(data)}),
+    onError: event => dispatch({type: 'error', event}),
+    onOpen: ({timeStamp}) => dispatch({type: 'open', timeStamp}),
+    onClose: event => dispatch({type: 'close', event})
+  });
+  return <>
+      <Text>{JSON.stringify(state)}</Text>
+      <Button onPress={() => wsinfo.send({"hello": "there"})} title="derp"/>
+  </>
+}
 
 const streamdispatch = (arg1, arg2) => console.log(arg1, arg2)
 const App = () => {
@@ -170,10 +196,12 @@ const App = () => {
       ["textinput", {value: "derp", onChange: ["stream", {sid: 1}]}]
     ]
   }];
+  //console.log("hello", {}?.derp?.herp());
+  //{unpack.tagged(tree, streamdispatch)}
   return <Fragment>
     <StatusBar barStyle="dark-content" />
     <SafeAreaView>
-      {unpack.tagged(tree, streamdispatch)}
+      <WsTest/>
     </SafeAreaView>
   </Fragment>
 };
