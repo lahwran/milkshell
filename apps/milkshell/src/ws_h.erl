@@ -12,17 +12,37 @@ websocket_init(State) ->
 	erlang:start_timer(1000, self(), jiffy:encode(#{<<"type">> => <<"hello">>})),
 	{ok, State}.
 
-format_parsed({ok, Parsed}) -> #{
-    <<"type">> => <<"parsed">>, <<"value">> => Parsed, <<"warnings">> => []};
-format_parsed({ok, Parsed, Warnings}) -> #{<<"type">> => <<"parsed">>, <<"value">> => Parsed, <<"warnings">> => Warnings};
-format_parsed({error, Errors, Warnings}) -> #{<<"type">> => <<"parsefailed">>, <<"errors">> => Errors, <<"warnings">> => Warnings};
-format_parsed(_Info) -> #{<<"type">> => <<"mismatch">>}.
+format_parsed({ok, Parsed}, Tokens) -> #{
+    <<"type">> => <<"parsed">>,
+    <<"value">> => Parsed,
+    <<"warnings">> => [],
+    <<"tokens">> => Tokens};
+format_parsed({ok, Parsed, Warnings}, Tokens) -> #{
+    <<"type">> => <<"parsed">>,
+    <<"value">> => Parsed,
+    <<"warnings">> => Warnings,
+    <<"tokens">> => Tokens};
+format_parsed({error, Errors, Warnings}, Tokens) -> #{
+    <<"type">> => <<"parsefailed">>,
+    <<"errors">> => Errors,
+    <<"warnings">> => Warnings,
+    <<"tokens">> => Tokens};
+format_parsed(_Info, Tokens) -> #{
+    <<"type">> => <<"mismatch">>,
+    <<"tokens">> => Tokens}.
+
+format_token({Name, Lineno, Data}) -> #{<<"type">> => atom_to_binary(Name, utf8), <<"line">> => Lineno, <<"data">> => list_to_binary(Data)};
+format_token({Name, Lineno}) -> #{<<"type">> => atom_to_binary(Name, utf8), <<"line">> => Lineno}.
+format_tokens([]) -> [];
+format_tokens([Head | Tokens]) -> [format_token(Head) | format_tokens(Tokens)].
+
 
 websocket_handle({text, Msg}, State) ->
     % TODO: how do I handle json decode errors correctly?
     Decoded = jiffy:decode(Msg, [return_maps]),
-    ParseResult = milkshell_misc:parse(binary_to_list(Decoded)),
-    Formatted = format_parsed(ParseResult),
+    {ParseResult, Tokens} = milkshell_misc:parse(binary_to_list(Decoded)),
+    FormattedTokens = format_tokens(Tokens),
+    Formatted = format_parsed(ParseResult, FormattedTokens),
     Encoded = jiffy:encode(Formatted),
 	{reply, {text, Encoded}, State};
 websocket_handle(_Data, State) ->

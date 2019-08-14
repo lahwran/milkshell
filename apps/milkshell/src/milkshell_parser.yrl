@@ -1,18 +1,18 @@
-Nonterminals list elems elem.
-Terminals '[' ']' ',' int atom.
-Rootsymbol list.
+Nonterminals pipelines pipeline command.
+Terminals '\n' '|' word.
+Rootsymbol pipelines.
 
-list -> '[' ']'       : [].
-list -> '[' elems ']' : '$2'.
 
-elems -> elem           : ['$1'].
-elems -> elem ',' elems : ['$1'|'$3'].
+pipelines -> pipeline : ['$1'].
+pipelines -> pipeline '\n' pipelines : ['$1'|'$3'].
 
-elem -> int  : extract_token('$1').
-elem -> atom : extract_token('$1').
-elem -> list : '$1'.
+pipeline -> command : ['$1'].
+pipeline -> command '|' pipeline : ['$1'|'$3'].
+
+command -> word : [extract_token('$1')].
+command -> word command : [extract_token('$1')|'$2'].
 
 Erlang code.
 
-extract_token({_Token, _Line, Value}) -> Value.
+extract_token({_Token, _Line, Value}) -> list_to_binary(Value).
 

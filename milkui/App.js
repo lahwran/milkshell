@@ -173,9 +173,9 @@ function wsreducer(state, action) {
     case 'message':
       switch (action.data.type) {
         case 'parsed':
-          return {...state, parsed: action.data.value};
+          return {...state, parsed: action.data.value, lastMessage: action.data};
         default:
-          return {...state, messages: [...state.messages, action.data]};
+          return {...state, lastMessage: action.data};
 
       }
     case 'close':
@@ -188,7 +188,7 @@ function wsreducer(state, action) {
   }
 }
 function WsTest() {
-  const [state, dispatch] = useReducer(wsreducer, {meta: [], messages: [], value: ''});
+  const [state, dispatch] = useReducer(wsreducer, {meta: [], lastMessage: null, value: ''});
 
   const wsinfo = useWebSocketCustom("ws://localhost:8080/websocket", {
     onMessage: ({data}) => dispatch({type: 'message', data: JSON.parse(data)}),
@@ -205,8 +205,8 @@ function WsTest() {
     dispatch({type: 'changeValue', value});
   });
   return <>
-      <TextInput onChange={handleChange} value={state.value}/>
-      <Text>{JSON.stringify(state)}</Text>
+      <TextInput multiline={true} onChange={handleChange} value={state.value}/>
+      <Text>{JSON.stringify(state, null, 4)}</Text>
       <Button onPress={() => wsinfo.send("[1,2,3]")} title="derp"/>
   </>
 }

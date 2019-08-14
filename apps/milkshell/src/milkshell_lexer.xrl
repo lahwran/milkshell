@@ -1,20 +1,15 @@
 Definitions.
 
-INT        = [0-9]+
-ATOM       = :[a-z_]+
-WHITESPACE = [\s\t\n\r]
+WS = [\s\t]
+WSNL = [\s\t\n\r]
 
 Rules.
 
-{INT}  : {token, {int,  TokenLine, list_to_integer(TokenChars)}}.
-{ATOM} : {token, {atom, TokenLine, to_atom(TokenChars)}}.
+[^\\|\s\t\n\r]+ : {token, {word, TokenLine, TokenChars}}.
+'[^']*' : {token, {word, TokenLine, string:sub_string(TokenChars,1,length(TokenChars)-1)}}.
 
-\[            : {token, {'[',  TokenLine}}.
-\]            : {token, {']',  TokenLine}}.
-,             : {token, {',',  TokenLine}}.
-{WHITESPACE}+ : skip_token.
+{WSNL}*\|{WSNL}*          : {token, {'|',  TokenLine}}.
+\n          : {token, {'\n',  TokenLine}}.
+{WS}+ : skip_token.
 
 Erlang code.
-
-to_atom([$:|Chars]) ->
-  list_to_atom(Chars).
