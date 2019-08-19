@@ -12,7 +12,8 @@
     "react-dom": "^16.8.6",
     "react-native": "0.60.4",
     "react-native-web": "^0.11.5",
-    "react-use-websocket": "^0.9.4"
+    "react-use-websocket": "^0.9.4",
+    "styled-components": "^4.3.2"
   },
   "devDependencies": {
     "@babel/core": "^7.5.5",

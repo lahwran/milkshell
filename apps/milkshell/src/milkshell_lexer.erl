@@ -475,7 +475,7 @@ yyaction_0(TokenChars, TokenLine) ->
 -compile({inline,yyaction_1/2}).
 -file("/Users/lahwran/milkshell/apps/milkshell/src/milkshell_lexer.xrl", 7).
 yyaction_1(TokenChars, TokenLine) ->
-     { token, { word, TokenLine, string : sub_string (TokenChars, 1, length (TokenChars) - 1) } } .
+     { token, { singlestring, TokenLine, string : sub_string (TokenChars, 1, length (TokenChars) - 1) } } .
 
 -compile({inline,yyaction_2/1}).
 -file("/Users/lahwran/milkshell/apps/milkshell/src/milkshell_lexer.xrl", 9).

@@ -6,7 +6,7 @@
  * @flow
  */
 
-import React, {Fragment, useState, useCallback, useReducer} from 'react';
+import React, {Fragment, useRef, useState, useCallback, useReducer} from 'react';
 import {
   SafeAreaView,
   StyleSheet,
@@ -17,6 +17,16 @@ import {
   StatusBar,
   Button,
 } from 'react-native';
+import styled from 'styled-components/native';
+
+
+const StatusLabel = styled(Text)`
+  padding: 4px;
+`;
+
+const Monospace = styled(Text)`
+  font-family: monospace;
+`;
 
 import {
   Header,
@@ -26,7 +36,7 @@ import {
   ReloadInstructions,
 } from './NewAppScreen/index';
 
-import useWebSocketCustom from './ws'
+import {useWebSocketReconnect} from './ws'
 
 // TODO: POTENTIAL SECURITY VULNERABILITY
 // remote code can invoke any attribute of funcs :s
@@ -165,49 +175,75 @@ const typehandlers = {
     </Fragment>
 )*/
 
+function reactjoin(seq, map, joiner) {
+  return seq.map((s, i) => i === 0 ? [map(s)] : [joiner(i), map(s)]).flat(1)
+}
+function ParsedCommand({value}) {
+  return <Text>{value.join(" ")}</Text>;
+}
+function ParsedPipeline({value}) {
+  if (!value) {
+    return <Text> no parse </Text>
+  }
+  return reactjoin(value,
+    (command, idx) => <ParsedCommand key={idx} value={command}/>,
+    (idx) => <Text key={`j${idx}`}>{" | "}</Text>
+  )
+  
+}
+function ParsedTextDemo({value}) {
+  if (!value) {
+    return <Text> no parse </Text>
+  }
+  return <>{value.map((pipeline, idx) => <ParsedPipeline key={idx} value={pipeline}/>)}</>;
+}
+
 function wsreducer(state, action) {
-  console.log(action)
   switch (action.type) {
     case 'changeValue': return {...state, value: action.value};
-    case 'open': return {...state, meta: [...state.meta, ["open", action.timeStamp]]};
     case 'message':
       switch (action.data.type) {
         case 'parsed':
-          return {...state, parsed: action.data.value, lastMessage: action.data};
+          return {...state, parsed: action.data.value, error: null};
+        case 'mismatch':
+          return {...state, parsed: null, error: action.data}
         default:
-          return {...state, lastMessage: action.data};
+          console.log("unknown message", action.data)
+          return state;
 
       }
-    case 'close':
-      return {
-        ...state,
-        meta: [...state.meta, ["close", action.value]],
-
-      };
-    case 'error': return {...state, meta: [...state.meta, ["error", action.value]]};
   }
 }
 function WsTest() {
-  const [state, dispatch] = useReducer(wsreducer, {meta: [], lastMessage: null, value: ''});
+  const [state, dispatch] = useReducer(wsreducer, {meta: [], value: '', error: null});
 
-  const wsinfo = useWebSocketCustom("ws://localhost:8080/websocket", {
-    onMessage: ({data}) => dispatch({type: 'message', data: JSON.parse(data)}),
-    onError: event => dispatch({type: 'error', event}),
-    onOpen: ({timeStamp}) => dispatch({type: 'open', timeStamp}),
+  const wsinfo = useWebSocketReconnect("ws://localhost:8080/websocket", {
+    timeout: 8000,
+    onMessage: (data) => {
+      dispatch({type: 'message', data})
+    },
+    onError: event => {
+      console.log('error', event)
+    },
+    onOpen: ({timeStamp}) => {
+      console.log('open', timeStamp)
+      wsinfo.send(state.value)
+    },
     onClose: event => {
-      dispatch({type: 'close', event})
+      console.log('close', event)
     }
   });
   const handleChange = useCallback(event => {
     const value = event.target.value;
-    console.log(value);
     wsinfo.send(value);
     dispatch({type: 'changeValue', value});
-  });
+  }, [wsinfo.send, dispatch]);
   return <>
-      <TextInput multiline={true} onChange={handleChange} value={state.value}/>
-      <Text>{JSON.stringify(state, null, 4)}</Text>
-      <Button onPress={() => wsinfo.send("[1,2,3]")} title="derp"/>
+    <TextInput multiline={true} onChange={handleChange} value={state.value}/>
+    <ParsedTextDemo value={state.parsed}/>
+    <StatusLabel>{wsinfo.status}</StatusLabel>
+    <Monospace>{'State:\n'}{JSON.stringify(state, null, 4)}</Monospace>
+    <Monospace>{'Last message:\n'}{JSON.stringify(wsinfo.last)}</Monospace>
   </>
 }
 

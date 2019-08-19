@@ -40,6 +40,7 @@ format_tokens([Head | Tokens]) -> [format_token(Head) | format_tokens(Tokens)].
 websocket_handle({text, Msg}, State) ->
     % TODO: how do I handle json decode errors correctly?
     Decoded = jiffy:decode(Msg, [return_maps]),
+    io:fwrite("~p~n", [Decoded]),
     {ParseResult, Tokens} = milkshell_misc:parse(binary_to_list(Decoded)),
     FormattedTokens = format_tokens(Tokens),
     Formatted = format_parsed(ParseResult, FormattedTokens),
