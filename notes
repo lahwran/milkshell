@@ -1,1 +1,40 @@
 you additionally want to be able to send named streams
+
+
+
+
+for statement in statements:
+    
+    for command in statement:
+            e
+        
+        
+    
+
+a = (command)
+
+#equivalent
+#1.
+command | 
+    command
+#2.
+command | command
+#3.
+command 
+  | command
+
+
+# equivalent
+# 1.
+milk parse "command ; | command"
+# 2.
+milk parse "command"; milk.parse "| command"
+
+
+
+
+# which of these should be the language selection syntax?
+
+@milk parse
+milk parse
+milk.parse
