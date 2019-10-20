@@ -181,128 +181,129 @@ async def echo(inputs, *args):
     yield
 
 
-python_grammar = parsley.makeGrammar(
-    r"""
-    python = '{' python* '}' | ~'}' :x  
-    block = <'{' python* '}'>:res (:x)* -> res
-    """,
-    {},
-)
-
-
-def tokenize_python(string):
-    return re.findall(r"""
-            (
-                [^{}"'#]*\#[^\n]*\n
-                | r?\"""(?:\\"|(?!\""").)*\"""
-                | r?'''(?:\\'|(?!''').)*'''
-                | r"[^"]*"
-                | r'[^']*'
-                | "(?:\\"|[^"])*"
-                | '(?:\\'|[^'])*'
-                | [^{}"'#]+
-                | [{}]
-                
-            )
-            """, string, re.VERBOSE)
-
 @functools.lru_cache(50)
 def recache(r):
-    return re.compile(r, re.VERBOSE)
+    return re.compile(r, re.VERBOSE | re.DOTALL)
+
 
 def tokenize_python(string):
+    offset = recache("[ ]*{").match(string).end()
+    start = offset
+    end = offset
+    depth = 1
     tokens = []
-    offset = 0
-    depth = 0
+    ranges = []
     while offset < len(string):
-        match = recache(r"""
+        match = recache(
+            r"""
             (
-                [^{}"'#]*\#[^\n]*\n
-                | r?\"""(?:\\"|(?!\""").)*\"""
-                | r?'''(?:\\'|(?!''').)*'''
+                \#[^\n]*\n
+                | r\"""(?:\\\\|\\"|(?!\""").)*\"""
+                | \"""(?:\\\\|\\"|(?!\""").)*\"""
+                | r?'''(?:\\\\|\\'|(?!''').)*'''
+                | '''(?:\\\\|\\'|(?!''').)*'''
                 | r"[^"]*"
                 | r'[^']*'
-                | "(?:\\"|[^"])*"
-                | '(?:\\'|[^'])*'
+                | "(?:\\\\|\\"|[^"])*"
+                | '(?:\\\\|\\'|[^'])*'
                 | [{}]
                 
             )
-            """).search(string, offset)
-        if not match: break
+            """
+        ).search(string, offset)
+        if not match:
+            break
         token = match.group(1)
-        if token == '{': depth += 1
-        if token == '}': depth -= 1
-        if token in ['{', '}'] and depth == 0: break
-
-        assert match.end() > offset
         offset = match.end()
-        print(offset)
-    return tokens, string
+        if token == '{':
+            depth += 1
+        if token == '}':
+            depth -= 1
+        if depth == 0:
+            end = match.start()
+            break
+        ranges.append((match.start(), match.end()))
+        tokens.append(token)
+    return string[start:end], string[offset:], tokens, ranges
+
 
 def parse_python_block(string):
-    tokens = tokenize_python(string)
-    return python_grammar(tokens).block()
+    a, b, c, d = tokenize_python(string)
+    return a, b
 
-def check_tokenize_python(code):
-    res = tokenize_python(code)
-    assert "".join(res) == code
-    res1 = tokenize_python("{" + code + "}")
-    assert res1[1:-1] == res
-    assert parse_python_block("{" + code + "}" + code) == res1
-    return res
+
+def check_tokenize_python(code, doprint=False):
+    s = "   {    " + code + "    }" + code[::-1]
+    a, b, c, d = tokenize_python(s)
+    if doprint:
+        lastend = 0
+        import sys
+        sys.stdout.write("START")
+        for start, end in d:
+            sys.stdout.write("\033[m" + s[lastend:start])
+            sys.stdout.write("\033[m\033[32m<\033[m\033[42m" + s[start:end] + "\033[m\033[32m>\033[m")
+            lastend = end
+        sys.stdout.write("\033[m" + s[lastend:])
+        sys.stdout.write("END")
+        sys.stdout.flush
+    assert a == "    " + code + "    "
+    assert b == code[::-1]
+    s = "        {    " + code + "    }" + code
+    a, b, c, d = tokenize_python(s)
+    assert a == "    " + code + "    "
+    assert b == code
+    return c
 
 
 def test_tokenize_python():
-    assert check_tokenize_python("") is not None
-    assert check_tokenize_python("1") is not None
-    assert check_tokenize_python("""   
+    assert check_tokenize_python("") == []
+    assert check_tokenize_python("1") == []
+    q = check_tokenize_python(
+        """   
      {
      eggbert \""" "hello" there! \""" def derp(hello:) completely! invalid! syntax!
-      r''' ' ' ' ' r' ' ' ''' # this is a comment, }}}}} and should not  be interpreted " as anything else \"""
+      r'''\n ' ' '\\n ' r' ' \n' \\n''' # this is a comment, }}}}} and should not  be interpreted " as anything else \"""
       {} {{} } {{{}{}}}
-     } """) == ['   \n     ',
-     '{',
-     '\n     eggbert ',
-     '""" "hello" there! """',
-     ' def derp(hello:) completely! invalid! syntax!\n      r',
-     "''' ' ' ' ' r' ' ' '''",
-     ' # this is a comment, } and should not { be interpreted " as anything else '
-     '"""\n',
-     '      ',
-     '{',
-     '}',
-     ' ',
-     '{',
-     '{',
-     '}',
-     ' ',
-     '}',
-     ' ',
-     '{',
-     '{',
-     '{',
-     '}',
-     '{',
-     '}',
-     '}',
-     '}',
-     '\n     ',
-     '}',
-     ' '
-     ]
-    assert check_tokenize_python(open(__file__).read()+"\n") is not None
+
+     } """
+    )
+    assert q == [
+        '{',
+        '""" "hello" there! """',
+        "r'''\n ' ' '\\n ' r' ' \n' \\n'''",
+        '# this is a comment, }}}}} and should not  be interpreted " as anything else """\n',
+        '{',
+        '}',
+        '{',
+        '{',
+        '}',
+        '}',
+        '{',
+        '{',
+        '{',
+        '}',
+        '{',
+        '}',
+        '}',
+        '}',
+        '}',
+    ]
+    q = check_tokenize_python(open(__file__).read() + "\n", True)
+    assert q is not None
+
 
 def extract_python_block(string):
     return tokenize_python(string)
 
-languages = {
-    "py": extract_python_block
-}
+
+languages = {"py": extract_python_block}
+
 
 def tokenize(string):
     tokens = []
     while len(string):
-        match = re.search(r"""
+        match = re.search(
+            r"""
             (
                 [|\n]
                 | "(?:\\"|[^"])*"
@@ -310,15 +311,19 @@ def tokenize(string):
                 | @[a-zA-Z]+
                 | [^ |\n]+
             )
-            """, string, re.VERBOSE)
-        if not match: return tokens
+            """,
+            string,
+            re.VERBOSE,
+        )
+        if not match:
+            return tokens
         token = match.group(1)
         if token.startswith("@"):
             language = languages[token[1:]]
             continue
 
         tokens.append(token)
-        string = string[match.end():]
+        string = string[match.end() :]
     return tokens
 
 
@@ -335,6 +340,7 @@ grammar = parsley.makeGrammar(
     """,
     {},
 )
+
 
 def parse(s):
     tokens = tokenize(s)
