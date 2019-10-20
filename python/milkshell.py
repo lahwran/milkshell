@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import functools
 import sys
 
 import ometa
@@ -205,6 +206,39 @@ def tokenize_python(string):
             )
             """, string, re.VERBOSE)
 
+@functools.lru_cache(50)
+def recache(r):
+    return re.compile(r, re.VERBOSE)
+
+def tokenize_python(string):
+    tokens = []
+    offset = 0
+    depth = 0
+    while offset < len(string):
+        match = recache(r"""
+            (
+                [^{}"'#]*\#[^\n]*\n
+                | r?\"""(?:\\"|(?!\""").)*\"""
+                | r?'''(?:\\'|(?!''').)*'''
+                | r"[^"]*"
+                | r'[^']*'
+                | "(?:\\"|[^"])*"
+                | '(?:\\'|[^'])*'
+                | [{}]
+                
+            )
+            """).search(string, offset)
+        if not match: break
+        token = match.group(1)
+        if token == '{': depth += 1
+        if token == '}': depth -= 1
+        if token in ['{', '}'] and depth == 0: break
+
+        assert match.end() > offset
+        offset = match.end()
+        print(offset)
+    return tokens, string
+
 def parse_python_block(string):
     tokens = tokenize_python(string)
     return python_grammar(tokens).block()
@@ -224,7 +258,7 @@ def test_tokenize_python():
     assert check_tokenize_python("""   
      {
      eggbert \""" "hello" there! \""" def derp(hello:) completely! invalid! syntax!
-      r''' ' ' ' ' r' ' ' ''' # this is a comment, } and should not { be interpreted " as anything else \"""
+      r''' ' ' ' ' r' ' ' ''' # this is a comment, }}}}} and should not  be interpreted " as anything else \"""
       {} {{} } {{{}{}}}
      } """) == ['   \n     ',
      '{',
@@ -392,4 +426,3 @@ def run_repl():
 if __name__ == "__main__":
     test_parse()
     test_tokenize()
-    # run([["hello", "there"], ["friend"], ["derp", "\\"], ["herp"]])
