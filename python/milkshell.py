@@ -191,7 +191,7 @@ def tokenize_python(string):
     start = offset
     end = offset
     depth = 1
-    tokens = []
+    python_tokens = []
     ranges = []
     while offset < len(string):
         match = recache(
@@ -223,36 +223,44 @@ def tokenize_python(string):
             end = match.start()
             break
         ranges.append((match.start(), match.end()))
-        tokens.append(token)
-    return string[start:end], string[offset:], tokens, ranges
+        python_tokens.append(token)
+    return ["{", string[start:end], "}"], string[offset:], python_tokens, ranges
 
 
 def parse_python_block(string):
-    a, b, c, d = tokenize_python(string)
-    return a, b
+    milkshell_tokens, remainder, python_tokens, python_token_ranges = tokenize_python(string)
+    return milkshell_tokens, remainder
 
 
 def check_tokenize_python(code, doprint=False):
-    s = "   {    " + code + "    }" + code[::-1]
-    a, b, c, d = tokenize_python(s)
+    prefix = "   {    " + code + "    }"
+    target_milkshell_tokens = ["{", "    " + code + "    ", "}"]
+    assert tokenize("hello |    @py " + prefix) == ["hello", "|", "@py"] + target_milkshell_tokens
+    assert tokenize("@py" + prefix.strip()) == ["@py"] + target_milkshell_tokens
+
+    s = prefix + code[::-1]
+    milkshell_tokens, remainder, python_tokens, python_token_ranges = tokenize_python(s)
     if doprint:
         lastend = 0
         import sys
         sys.stdout.write("START")
-        for start, end in d:
+        for start, end in python_token_ranges:
             sys.stdout.write("\033[m" + s[lastend:start])
             sys.stdout.write("\033[m\033[32m<\033[m\033[42m" + s[start:end] + "\033[m\033[32m>\033[m")
             lastend = end
         sys.stdout.write("\033[m" + s[lastend:])
         sys.stdout.write("END")
-        sys.stdout.flush
-    assert a == "    " + code + "    "
-    assert b == code[::-1]
+        sys.stdout.flush()
+    assert milkshell_tokens == target_milkshell_tokens
+    assert remainder == code[::-1]
+
     s = "        {    " + code + "    }" + code
-    a, b, c, d = tokenize_python(s)
-    assert a == "    " + code + "    "
-    assert b == code
-    return c
+    milkshell_tokens, remainder, python_tokens, python_token_ranges = tokenize_python(s)
+    assert milkshell_tokens == target_milkshell_tokens
+    assert remainder == code
+
+
+    return python_tokens
 
 
 def test_tokenize_python():
@@ -292,11 +300,9 @@ def test_tokenize_python():
     assert q is not None
 
 
-def extract_python_block(string):
-    return tokenize_python(string)
 
 
-languages = {"py": extract_python_block}
+languages = {"py": parse_python_block}
 
 
 def tokenize(string):
@@ -318,12 +324,13 @@ def tokenize(string):
         if not match:
             return tokens
         token = match.group(1)
+        string = string[match.end() :]
+        tokens.append(token)
         if token.startswith("@"):
             language = languages[token[1:]]
+            ms_tokens, string = language(string)
+            tokens.extend(ms_tokens)
             continue
-
-        tokens.append(token)
-        string = string[match.end() :]
     return tokens
 
 
