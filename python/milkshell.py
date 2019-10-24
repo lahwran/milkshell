@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import functools
+import glob
+import itertools
 import sys
 
 import ometa
@@ -198,12 +200,8 @@ def tokenize_python(string):
             r"""
             (
                 \#[^\n]*\n
-                | r\"""(?:\\\\|\\"|(?!\""").)*\"""
                 | \"""(?:\\\\|\\"|(?!\""").)*\"""
-                | r?'''(?:\\\\|\\'|(?!''').)*'''
                 | '''(?:\\\\|\\'|(?!''').)*'''
-                | r"[^"]*"
-                | r'[^']*'
                 | "(?:\\\\|\\"|[^"])*"
                 | '(?:\\\\|\\'|[^'])*'
                 | [{}]
@@ -232,32 +230,36 @@ def parse_python_block(string):
     return milkshell_tokens, remainder
 
 
-def check_tokenize_python(code, doprint=False):
+def check_tokenize_python(code):
     prefix = "   {    " + code + "    }"
     target_milkshell_tokens = ["{", "    " + code + "    ", "}"]
-    assert tokenize("hello |    @py " + prefix) == ["hello", "|", "@py"] + target_milkshell_tokens
-    assert tokenize("@py" + prefix.strip()) == ["@py"] + target_milkshell_tokens
 
     s = prefix + code[::-1]
     milkshell_tokens, remainder, python_tokens, python_token_ranges = tokenize_python(s)
-    if doprint:
+
+    try:
+        assert milkshell_tokens == target_milkshell_tokens
+        assert remainder == code[::-1]
+
+        s = "        {    " + code + "    }" + code
+        milkshell_tokens, remainder, python_tokens, python_token_ranges = tokenize_python(s)
+        assert milkshell_tokens == target_milkshell_tokens
+        assert remainder == code
+    except AssertionError:
+
         lastend = 0
         import sys
         sys.stdout.write("START")
         for start, end in python_token_ranges:
             sys.stdout.write("\033[m" + s[lastend:start])
-            sys.stdout.write("\033[m\033[32m<\033[m\033[42m" + s[start:end] + "\033[m\033[32m>\033[m")
+            sys.stdout.write("\033[m\033[32m<\033[m\033[42m" + s[start:end].replace("\n", "\033[m\n\033[42m") + "\033[m\033[32m>\033[m")
             lastend = end
         sys.stdout.write("\033[m" + s[lastend:])
         sys.stdout.write("END")
         sys.stdout.flush()
-    assert milkshell_tokens == target_milkshell_tokens
-    assert remainder == code[::-1]
-
-    s = "        {    " + code + "    }" + code
-    milkshell_tokens, remainder, python_tokens, python_token_ranges = tokenize_python(s)
-    assert milkshell_tokens == target_milkshell_tokens
-    assert remainder == code
+        raise
+    assert tokenize("hello |    @py " + prefix) == ["hello", "|", "@py"] + target_milkshell_tokens
+    assert tokenize("@py" + prefix.strip()) == ["@py"] + target_milkshell_tokens
 
 
     return python_tokens
@@ -278,7 +280,7 @@ def test_tokenize_python():
     assert q == [
         '{',
         '""" "hello" there! """',
-        "r'''\n ' ' '\\n ' r' ' \n' \\n'''",
+        "'''\n ' ' '\\n ' r' ' \n' \\n'''",
         '# this is a comment, }}}}} and should not  be interpreted " as anything else """\n',
         '{',
         '}',
@@ -296,8 +298,15 @@ def test_tokenize_python():
         '}',
         '}',
     ]
-    q = check_tokenize_python(open(__file__).read() + "\n", True)
+    q = check_tokenize_python(open(__file__).read() + "\n")
     assert q is not None
+
+def test_tokenize_python_slow():
+    for x in set(itertools.chain.from_iterable(glob.glob(x + "**.py") + glob.glob(x + "/**/*.py") for x in sys.path if x and not x.endswith(".zip"))):
+        try:
+            check_tokenize_python(open(x).read() + "\n")
+        except UnicodeDecodeError: continue
+
 
 
 
