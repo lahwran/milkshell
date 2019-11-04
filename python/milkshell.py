@@ -2,6 +2,7 @@
 import functools
 import glob
 import itertools
+import os
 import sys
 
 import ometa
@@ -225,9 +226,64 @@ def tokenize_python(string):
     return ["{", string[start:end], "}"], string[offset:], python_tokens, ranges
 
 
+# three types: `x`, "x"/'x', /x/. `` allows ${js}, escaped by backslash. ""/'' allow escaped "/', by backslash. /x/ allows escaped /, by backslash or character class.
+js_grammar = parsley.makeGrammar(
+    r"""
+    newline = '\n'
+    backtick = "`"
+    single_quote = "'"
+    double_quote = '"'
+    backslash = :x ?(x == "\\")
+    comment_start = "//"
+    block_comment_start = "/*"
+    block_comment_end = "*/"
+    slash = "/"
+    open_bracket = '['
+    close_bracket = ']'
+    open_curly = '{'
+    close_curly = '}'
+    character_class = open_bracket (backslash anything | ~close_bracket anything)* close_bracket 
+    string = (backtick ("${" js close_curly | backslash anything | ~backtick anything)* backtick
+            | slash (backslash anything | character_class | ~slash anything)* slash 
+            | double_quote (backslash anything | ~double_quote anything)* double_quote
+            | single_quote (backslash anything | ~single_quote anything)* single_quote)
+    js_element = (open_curly js close_curly 
+                    | comment_start (~newline anything)* newline
+                    | block_comment_start (~block_comment_end anything)* block_comment_end
+                    | ~comment_start string
+                    | ~open_curly ~close_curly ~block_comment_start ~comment_start anything
+                    )
+    js = js_element*
+    top = ' '* '{' <js>:j '}' <anything*>:rest  -> ['{', j, '}'], rest
+    """,
+    {},
+)
+
+
+def parse_js(string):
+    try:
+
+        return js_grammar(string).top()
+    except parsley.ParseError:
+        print(f"Error parsing string: <<<{string}>>>")
+        raise
+
+
 def parse_python_block(string):
     milkshell_tokens, remainder, python_tokens, python_token_ranges = tokenize_python(string)
     return milkshell_tokens, remainder
+
+
+def check_tokenize_js(code):
+    prefix = "   {    " + code + "    }"
+    target_milkshell_tokens = ["{", "    " + code + "    ", "}"]
+
+    s = prefix + code[::-1]
+
+    milkshell_tokens, remainder = parse_js(s)
+    assert milkshell_tokens == target_milkshell_tokens
+    assert remainder == code[::-1]
+    print("success")
 
 
 def check_tokenize_python(code):
@@ -249,10 +305,15 @@ def check_tokenize_python(code):
 
         lastend = 0
         import sys
+
         sys.stdout.write("START")
         for start, end in python_token_ranges:
             sys.stdout.write("\033[m" + s[lastend:start])
-            sys.stdout.write("\033[m\033[32m<\033[m\033[42m" + s[start:end].replace("\n", "\033[m\n\033[42m") + "\033[m\033[32m>\033[m")
+            sys.stdout.write(
+                "\033[m\033[32m<\033[m\033[42m"
+                + s[start:end].replace("\n", "\033[m\n\033[42m")
+                + "\033[m\033[32m>\033[m"
+            )
             lastend = end
         sys.stdout.write("\033[m" + s[lastend:])
         sys.stdout.write("END")
@@ -260,7 +321,6 @@ def check_tokenize_python(code):
         raise
     assert tokenize("hello |    @py " + prefix) == ["hello", "|", "@py"] + target_milkshell_tokens
     assert tokenize("@py" + prefix.strip()) == ["@py"] + target_milkshell_tokens
-
 
     return python_tokens
 
@@ -301,14 +361,114 @@ def test_tokenize_python():
     q = check_tokenize_python(open(__file__).read() + "\n")
     assert q is not None
 
-def test_tokenize_python_slow():
-    for x in set(itertools.chain.from_iterable(glob.glob(x + "**.py") + glob.glob(x + "/**/*.py") for x in sys.path if x and not x.endswith(".zip"))):
+
+# def test_tokenize_python_slow():
+#    for x in set(itertools.chain.from_iterable(glob.glob(x + "**.py") + glob.glob(x + "/**/*.py") for x in sys.path if x and not x.endswith(".zip"))):
+#        try:
+#            check_tokenize_python(open(x).read() + "\n")
+#        except UnicodeDecodeError: continue
+
+
+def test_parse_js():
+    check_tokenize_js("")
+    check_tokenize_js("hello there")
+    check_tokenize_js("hello { there } friend")
+
+    check_tokenize_js("hello { there// } friend\n} real ending")
+    check_tokenize_js("hello { there// } fr/*iend\n} real ending /* {{{ \n // */ end")
+    check_tokenize_js("' this is a string'")
+    check_tokenize_js("'`\"this is a string with other string types nested'")
+    check_tokenize_js("`b'ack'ticks`")
+    check_tokenize_js('"`b\'ack\'ticks"')
+    check_tokenize_js('"escaping: \\" "')
+    check_tokenize_js(
+        "hello { there// } fr/*iend\n} real 'ending'                /* {{{ \n // */ end"
+    )
+    check_tokenize_js(
+        "hello { there// } fr/*iend\n} real 'hello \\' world' ending /* {{{ \n // */ end"
+    )
+    check_tokenize_js(r"""
+        var a = /asd(around th[/]e world)/;
+        var b = /asd(around th[\/]e world)/;
+        var c = /asd(around th\/e world)/;
+        var d = /asd(around ${around the world}th\/e world)/;
+    """)
+    check_tokenize_js(r"""var a = /[^[\]]/;""")
+    check_tokenize_js(r"""var a = /\[[^[\]]/;""")
+    check_tokenize_js(r"""var a = /\[[^[\]]["']/;""")
+    check_tokenize_js(r"""var a = /\[[^[\]]["'][^\\]/;""")
+    check_tokenize_js(r"""
+    // comment with slash/in it
+    """)
+    check_tokenize_js("a = `${/}/}`")
+
+def test_tokenize_js_2():
+    check_tokenize_js([r"""
+
+        
+var isSymbol = require('./isSymbol');
+
+function baseSortedIndexBy(array, value, iteratee, retHighest) {
+  value = iteratee(value);
+
+  var low = 0,
+      high = array == null ? 0 : array.length,
+      valIsNaN = value !== value,
+      valIsNull = value === null,
+      valIsSymbol = isSymbol(value),
+      valIsUndefined = value === undefined;
+
+  while (low < high) {
+    var mid = nativeFloor((low + high) / 2),
+        computed = iteratee(array[mid]),
+        othIsDefined = computed !== undefined,
+        othIsNull = computed === null,
+        othIsReflexive = computed === computed,
+        othIsSymbol = isSymbol(computed);
+
+    if (valIsNaN) {
+      var setLow = retHighest || othIsReflexive;
+    } else if (valIsUndefined) {
+      setLow = othIsReflexive && (retHighest || othIsDefined);
+    } else if (valIsNull) {
+      setLow = othIsReflexive && othIsDefined && (retHighest || !othIsNull);
+    } else if (valIsSymbol) {
+      setLow = othIsReflexive && othIsDefined && !othIsNull && (retHighest || !othIsSymbol);
+    } else if (othIsNull || othIsSymbol) {
+      setLow = false;
+    } else {
+      setLow = retHighest ? (computed <= value) : (computed < value);
+    }
+    if (setLow) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return nativeMin(high, MAX_ARRAY_INDEX);
+}
+
+module.exports = baseSortedIndexBy;
+
+
+
+    """][0])
+
+
+def test_tokenize_js_slow():
+    return
+    js_dirs = glob.glob(
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "**/node_modules")
+    )
+    for x in set(
+        itertools.chain.from_iterable(
+            glob.glob(x + "**.js") + glob.glob(x + "/**/*.js") for x in js_dirs
+        )
+    ):
         try:
-            check_tokenize_python(open(x).read() + "\n")
-        except UnicodeDecodeError: continue
-
-
-
+            check_tokenize_js(open(x).read() + "\n")
+        except UnicodeDecodeError:
+            continue
 
 
 languages = {"py": parse_python_block}
