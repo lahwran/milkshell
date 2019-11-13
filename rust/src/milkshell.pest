@@ -1,0 +1,89 @@
+_space = _{" "}
+_eat_ws = _{ _space* }
+_whitespace = _{ _space+ }
+// todo: inline these character literals maybe? idk
+_slash = _{ "/" }
+_newline = _{"\n"}
+_backtick = _{ "`" }
+_single_quote = _{ "'" }
+_double_quote = _{ "\"" }
+_backslash = _{ "\\" }
+_js_comment_start = _{ "//" }
+_js_block_comment_start = _{ "/*" }
+_js_block_comment_end = _{ "*/" }
+_open_bracket = _{ "[" }
+_close_bracket = _{ "]" }
+_open_curly = _{ "{" }
+_close_curly = _{ "}" }
+_anything = _{ ANY }
+character_class = { _open_bracket ~ (_backslash ~ _anything | !_close_bracket ~ _anything)*  ~ _close_bracket }
+js_string = { (_backtick ~ ("${" ~ js ~ _close_curly | _backslash ~ _anything | !_backtick ~ _anything)* ~ _backtick
+        | _slash ~ (_backslash ~ _anything | character_class | !_slash ~ _anything)* ~ _slash
+        | _double_quote ~ (_backslash ~ _anything | !_double_quote ~ _anything)* ~ _double_quote
+        | _single_quote ~ (_backslash ~ _anything | !_single_quote ~ _anything)* ~ _single_quote) }
+
+js_element = { (_open_curly ~ js ~ _close_curly
+                | _js_comment_start ~ (!_newline ~ _anything)* ~ _newline
+                | _js_block_comment_start ~ (!_js_block_comment_end ~ _anything)* ~ _js_block_comment_end
+                | !_js_comment_start ~ js_string
+                | !_open_curly ~ !_close_curly ~ !_js_block_comment_start ~ !_js_comment_start ~ _anything
+                ) }
+js = { js_element* }
+js_block = { " "* ~ "{" ~ js ~ "}" ~ ANY*}
+python_block = { "asdf" }
+_code_char = _{ ANY }
+_string_char = _{ ANY }
+pipe = { "|" }
+word_separator = _{ pipe | _newline | _space }
+/// orange
+double_string = { _double_quote ~ (_backslash ~ _double_quote | !_double_quote ~ _string_char )* ~ _double_quote ~ &word_separator }
+/// pink
+single_string = { _single_quote ~ (!_single_quote ~ _string_char)* ~ _single_quote ~ &word_separator }
+_string_start = _{_single_quote | _double_quote}
+_language_header_start = _{ "@" }
+/// #ff00ff
+language_header = { _language_header_start ~ (!word_separator ~ _code_char)+ }
+/// violet
+language_block = {
+    &language_header
+    ~ (python_block | js_block)
+}
+_comment_start = _{ "#" }
+
+/// yellow
+plain_word = { !_language_header_start ~ !_comment_start ~ (!word_separator ~ !_string_start ~ !_comment_start ~ _code_char)+ }
+token = { double_string
+                        | single_string
+                        | language_block
+                        | plain_word }
+
+command = { token ~ (_whitespace ~ token)* }
+
+EOL = _{ _newline | EOI }
+
+
+
+// todo: this makes it a syntax error to not have a space before a comment. probably good for ambiguity!
+// will it be too annoying, though?
+/// blue
+comment = {_comment_start ~ (!EOL ~ _code_char)*}
+
+
+ews_eoi = {_eat_ws ~ EOI}
+ews_command = { _eat_ws ~ command }
+ws_comment = { _whitespace ~ comment }
+ews_newline = {_eat_ws ~ _newline}
+
+ews_pipeline = {
+    ews_command
+    ~ (
+        (ws_comment? ~ ews_newline)?
+        ~ _eat_ws ~ pipe
+        ~ (ws_comment? ~ ews_newline)?
+        ~ _eat_ws ~ ews_command
+    )*
+}
+
+ews_logical_line = { ews_pipeline? ~ ws_comment? }
+
+milkshell = { (ews_logical_line ~ ews_newline)* ~ ews_logical_line ~ ews_eoi}
