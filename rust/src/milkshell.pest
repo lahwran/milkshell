@@ -19,14 +19,14 @@ _close_curly = _{ "}" }
 _code_char = _{ ANY }
 _string_char = _{ ANY }
 _anything = _{ ANY }
-letter = { 'a'..'z' | 'A'..'Z' }
-digit = { '0'..'9' }
-character_class = { _open_bracket ~ (_backslash ~ _anything | !_close_bracket ~ _anything)*  ~ _close_bracket }
-js_string = { (_backtick ~ ("${" ~ javascript_inner? ~ _close_curly | _backslash ~ _anything | !_backtick ~ _anything)* ~ _backtick
+letter = _{ 'a'..'z' | 'A'..'Z' }
+digit = _{ '0'..'9' }
+character_class = _{ _open_bracket ~ (_backslash ~ _anything | !_close_bracket ~ _anything)*  ~ _close_bracket }
+js_string = _{ (_backtick ~ ("${" ~ javascript_inner? ~ _close_curly | _backslash ~ _anything | !_backtick ~ _anything)* ~ _backtick
         | _double_quote ~ (_backslash ~ _anything | !_double_quote ~ _anything)* ~ _double_quote
         | _single_quote ~ (_backslash ~ _anything | !_single_quote ~ _anything)* ~ _single_quote) }
 _js_slash = _{ !_js_comment_start ~ !_js_block_comment_start ~ "/" ~ !"/"}
-js_re = { _js_slash ~ (_backslash ~ _anything | character_class | !_slash ~ _anything)+ ~ "/" }
+js_re = _{ _js_slash ~ (_backslash ~ _anything | character_class | !_slash ~ _anything)+ ~ "/" }
 
 /*
 no regex allowed after these tokens:
@@ -48,17 +48,17 @@ MinusMinus (same)
 all js tokens (according to this parser)
 
 */
-js_special_number = {
+js_special_number = _{
     "0" ~ ("b" | "B" | "x" | "X" | "o" | "O") ~ ('0'..'9' | 'a'..'f' | 'A'..'F' | "_") ~ "n"?
 }
 
-js_int = {  '0'..'9' ~ ('0'..'9' | "_")* }
-js_float = {
+js_int = _{  '0'..'9' ~ ('0'..'9' | "_")* }
+js_float = _{
  (js_int ~ "." ~ js_int | "." ~ js_int | js_int )
  ~ (("e" | "E") ~ ("+" | "-")? ~ ('0'..'9' | "_")+)?
 }
 /// aqua
-js_nodiv_symbol = { !( "--" | "++") ~ // slash can't follow any of these tokens as a division operator
+js_nodiv_symbol = _{ !( "--" | "++") ~ // slash can't follow any of these tokens as a division operator
     ("!" |
     "%" |
     "&" |
@@ -79,14 +79,14 @@ js_nodiv_symbol = { !( "--" | "++") ~ // slash can't follow any of these tokens 
     "@")
 
 }
-js_div = {
+js_div = _{
     _js_slash
 }
-js_type_annotation = {
+js_type_annotation = _{
 "<" ~ (js_identifier_continue | "[" | "]" | js_whitespace_element | "*")* ~ ">"
 }
 /// blue
-js_nodiv_keyword = { // slash can't follow any of these tokens as a division operator
+js_nodiv_keyword = _{ // slash can't follow any of these tokens as a division operator
     ("await" |
     "case" |
     "default" |
@@ -134,41 +134,41 @@ js_nodiv_keyword = { // slash can't follow any of these tokens as a division ope
 
 }
 /// pink
-js_noreafter_noid = { js_string | js_special_number | js_float | "true" | "false" | "[" ~ javascript_inner? ~ "]" | "(" ~ javascript_inner? ~ ")"  | "--" | "++"}
+js_noreafter_noid = _{ js_string | js_special_number | js_float | "true" | "false" | "[" ~ javascript_inner? ~ "]" | "(" ~ javascript_inner? ~ ")"  | "--" | "++"}
 /// #ffaa33
-js_noreafter = {  js_identifier ~ js_type_annotation? | js_noreafter_noid }
+js_noreafter = _{  js_identifier ~ js_type_annotation? | js_noreafter_noid }
 
-js_identifier_start = { letter | "$" | "_" }
-js_identifier_continue = { js_identifier_start | digit }
-js_identifier = { js_identifier_start ~ (js_identifier_continue)* } // !_open_curly ~ !_close_curly ~ !_js_block_comment_start ~ !_js_comment_start ~ _anything
+js_identifier_start = _{ letter | "$" | "_" }
+js_identifier_continue = _{ js_identifier_start | digit }
+js_identifier = _{ js_identifier_start ~ (js_identifier_continue)* } // !_open_curly ~ !_close_curly ~ !_js_block_comment_start ~ !_js_comment_start ~ _anything
 /// yellow
-js_block_comment = { _js_block_comment_start ~ (!_js_block_comment_end ~ _anything)* ~ _js_block_comment_end }
+js_block_comment = _{ _js_block_comment_start ~ (!_js_block_comment_end ~ _anything)* ~ _js_block_comment_end }
 /// #ffff88
-js_comment = { _js_comment_start ~ (!_newline ~ _anything)* ~ _newline }
+js_comment = _{ _js_comment_start ~ (!_newline ~ _anything)* ~ _newline }
 /// #88aa88
-jsx_text = { !"<" ~ _anything }
-jsx_element = {
+jsx_text = _{ !"<" ~ _anything }
+jsx_element = _{
     "{" ~ javascript_inner ~ "}"
     | jsx_text
     | jsx
 }
 /// green
-jsx_identifier = { js_identifier_start ~ (js_identifier_continue | "." | "-")* }
-jsx_close_tag = { "</" ~ jsx_identifier ~ ">" | "</>" }
-jsx_tag_prefix = { "<" ~ jsx_identifier ~ (js_whitespace_element* ~ (jsx_identifier ~ "=")? ~ (js_string | "{" ~ javascript_inner ~ "}"))* ~ js_whitespace_element* }
+jsx_identifier = _{ js_identifier_start ~ (js_identifier_continue | "." | "-")* }
+jsx_close_tag = _{ "</" ~ jsx_identifier ~ ">" | "</>" }
+jsx_tag_prefix = _{ "<" ~ jsx_identifier ~ (js_whitespace_element* ~ (jsx_identifier ~ "=")? ~ (js_string | "{" ~ javascript_inner ~ "}"))* ~ js_whitespace_element* }
 /// green
-jsx_open_tag = { "<>" | jsx_tag_prefix ~ ">"}
+jsx_open_tag = _{ "<>" | jsx_tag_prefix ~ ">"}
 /// green
-jsx_selfclose_tag = { jsx_tag_prefix ~ "/>"}
-jsx = {
+jsx_selfclose_tag = _{ jsx_tag_prefix ~ "/>"}
+jsx = _{
 
    jsx_open_tag
         ~ jsx_element*
         ~ jsx_close_tag
     | jsx_selfclose_tag
 }
-js_whitespace_element = { (_newline | _space)+ | js_comment | js_block_comment}
-js_element = { (_open_curly ~ javascript_inner? ~ _close_curly
+js_whitespace_element = _{ (_newline | _space)+ | js_comment | js_block_comment}
+js_element = _{ (_open_curly ~ javascript_inner? ~ _close_curly
                 | js_whitespace_element
                 | !_js_comment_start ~ !_js_block_comment_start ~ (
                     jsx
@@ -178,8 +178,8 @@ js_element = { (_open_curly ~ javascript_inner? ~ _close_curly
                     | js_re
                 )
             ) }
-shebang = { "#!" ~ (!_newline ~ _anything)* ~ _newline}
-javascript_inner = { js_element+ }
+shebang = _{ "#!" ~ (!_newline ~ _anything)* ~ _newline}
+javascript_inner = _{ js_element+ }
 
 javascript = { _eat_nl ~ shebang? ~  javascript_inner? }
 js_block = { "@js" ~ _eat_ws ~ _block_start ~ javascript ~ _block_end}
@@ -199,7 +199,7 @@ _python_string = _{
 _python_bracketed = _{
     _block_start ~ python ~ _block_end
 }
-python_token = {
+python_token = _{
     _python_comment
     | _python_triple_string
     | _python_string
@@ -215,9 +215,11 @@ _block_end = _{ "}" }
 pipe = { "|" }
 word_separator = _{ pipe | _newline | _space | _block_start }
 /// orange
-double_string = { _double_quote ~ (_backslash ~ _double_quote | !_double_quote ~ _string_char )* ~ _double_quote ~ &word_separator }
+double_string_body = { (_backslash ~ _double_quote | !_double_quote ~ _string_char )* }
+double_string = { _double_quote ~ double_string_body ~ _double_quote ~ &word_separator }
 /// pink
-single_string = { _single_quote ~ (!_single_quote ~ _string_char)* ~ _single_quote ~ &word_separator }
+single_string_body = { (!_single_quote ~ _string_char)* }
+single_string = { _single_quote ~ single_string_body ~ _single_quote ~ &word_separator }
 _string_start = _{_single_quote | _double_quote}
 _language_header_start = _{ "@" }
 /// #ff00ff
@@ -249,20 +251,17 @@ comment = {_comment_start ~ (!EOL ~ _code_char)*}
 
 
 _ews_eoi = _{_eat_ws ~ EOI}
-ews_command = { _eat_ws ~ command }
-ws_comment = { _whitespace ~ comment }
-ews_newline = {_eat_ws ~ _newline}
+_ws_comment = _{ _whitespace ~ comment }
+_ews_newline = _{_eat_ws ~ _newline}
 
 ews_pipeline = {
-    ews_command
+    (_eat_ws ~ command)
     ~ (
-        (ws_comment? ~ ews_newline)?
+        (_ws_comment? ~ _ews_newline)?
         ~ _eat_ws ~ pipe
-        ~ (ws_comment? ~ ews_newline)?
-        ~ _eat_ws ~ ews_command
+        ~ (_ws_comment? ~ _ews_newline)?
+        ~ _eat_ws ~ command
     )*
 }
 
-ews_logical_line = { ews_pipeline? ~ ws_comment? }
-
-milkshell = { (ews_logical_line ~ ews_newline)* ~ ews_logical_line ~ _ews_eoi}
+milkshell = { ((ews_pipeline? ~ _ws_comment?) ~ _ews_newline)* ~ (ews_pipeline? ~ _ws_comment?) ~ _ews_eoi}
