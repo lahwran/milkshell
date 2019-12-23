@@ -6,6 +6,15 @@ extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
+#[macro_use] extern crate lazy_static;
+extern crate regex;
+
+extern crate unindent;
+
+use unindent::unindent;
+
+use regex::Regex;
+
 use pest::iterators::Pair;
 use pest::Parser;
 
@@ -95,7 +104,7 @@ enum Env {
     Python,
     Javascript,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum SharedInvocationPipe {
     StandardIn,
     StandardOut,
@@ -106,6 +115,13 @@ enum SharedInvocationPipe {
 struct SharedInvocation {
     environment: Env,
     ops: Vec<Op>,
+    pipe_in: Option<SharedInvocationPipe>,
+    pipe_out: Option<SharedInvocationPipe>,
+}
+#[derive(Debug)]
+struct ConcreteSharedInvocation {
+    environment: Env,
+    code: String,
     pipe_in: Option<SharedInvocationPipe>,
     pipe_out: Option<SharedInvocationPipe>,
 }
@@ -353,9 +369,42 @@ fn test_js() {
     })
     .unwrap();
 }
+fn codegen_javascript(si: &SharedInvocation) -> ConcreteSharedInvocation {
+
+}
+
+fn codegen_python(si: &SharedInvocation) -> ConcreteSharedInvocation {
+    let mut result = (
+        "\
+        import milkshell\n\
+        import trio\n\n\
+        ".to_string());
+
+    for (idx, op) in si.ops.iter().enumerate() {
+        for (arg_idx, arg) in op.arguments.iter().enumerate() {
+            gen_python_arg();
+            match arg {
+
+            }
+        }
+    }
+    ConcreteSharedInvocation {
+        environment: Env::Python,
+        code: format!(),
+        pipe_in: si.pipe_in,
+        pipe_out: si.pipe_out
+    }
+}
+
+fn codegen(si: &SharedInvocation) -> ConcreteSharedInvocation {
+    match si.environment {
+        Python => codegen_python(si),
+        Javascript => codegen_javascript(si)
+    }
+}
 
 fn side_effect_run_pipeline(pipeline: &Vec<SharedInvocation>) {
-
+    let generated_code = pipeline.map(codegen);
 }
 /*
 from milkshell import receiver, output, check_pipeline
