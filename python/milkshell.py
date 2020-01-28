@@ -1,610 +1,125 @@
-#!/usr/bin/env python3
-import functools
-import glob
-import itertools
+# import argparse
+
+# parser = argparse.ArgumentParser()
+# parser.add_argument("command", help="which builtin command to launch")
+# parser.add_argument("input", help="input address in milkshell format")
+# parser.add_argument("output", help="output address in milkshell format")
 import os
 import sys
 
-import ometa
-import parsley
-import re
+# json:delimited:fd:6,7
+# json:delimited:fd:0
+# fd:1
+from typing import List
 
-import pytest
+try:
+    assert False
+except AssertionError: pass
+else:
+    raise Exception("Assertions appear to be disabled")
 
-commands = {}
-commands_by_target = {}
+FD_CHUNK_SIZE = 1
 
+# TODO: handle read/write naming - allow multiple functions for read, write, etc
+# TODO: handle different open modes on interators -
+addr_handlers = {}
 
-# bash commands we want
-# - if
-# - history
-# - exit
-# - for {}
-# - while {}
-# - pushd
-# - popd
-# - pwd
-# - echo
-# - time
-# - function {}
-# - unset
-# - break
-# - [command] &
-# - kill
-# - jobs
-# - read?
-# - return
-# - export
-# - cd
-# - ctrl+z, ctrl+c, etc
-# - bg/fg
-# - argument parsing?
-# - clear
-# - env
+class _Milkaddr:
+    def __init__(self,addr: (str, List[List[str]])):
+        """
+        Parse and nest flat milkaddr
+        :param addr:
+        :return:
+        """
+        name, remaining_args = addr
+        addr_handler, parsers = addr_handlers[name]
 
-# coreutils/etc:
-# - ls
-# - cat
-# - chmod
-# - cp
+        these_args = remaining_args[0]
+        remaining_args = remaining_args[1:]
+        assert len(these_args) <= len(parsers)
+        parsed_args = []
+        for arg, type in zip(these_args,parsers):
+            if type == _Milkaddr:
+                arg = (arg, remaining_args)
+            parsed_args.append(type(arg))
 
-# things to support?
-# - tig
-# - sed
-# - sudo
-# - ssh
-# - sqlite3
-# - sort
-# - sleep
-# - sha256sum
-# - wget
-# - whereis
-# - which
-# - whois
-# - yarn
-# - youtube-dl
-# - adb
-# - asana
-# - aws
-# - bash
-# - dotfiles-install
-# - black
-# - brew
-# - cmake
-# - convert
-# - create-react-app
-# - base64
-# - crontab
-# - curl
-# - date
-# - df
-# -diff
-# - display
-# - dropdb
-# - elixir
-# - erl
-# - erlc
-# - file
-# - escript
-# - ffmpeg
-# - find
-# - git
-# - go
-# - grep
-# - head
-# - host
-# - identify
-# - instanttype
-# - ifconfig
-# - iex
-# - ipython?
-# -  lerna
-# - make
-# - lsof
-# - manual
-# - mkdir
-# - mosh
-# mount
-# mplayer
-# mtr
-# openssl
-# osascript
-# pathprepend
-# pbpaste
-# ping
-# pip
-# pipenv
-# ponyc
-# - py.test
-# psql
-# ps
-#
+        self.addr_handler = addr_handler
+        self.name = name
+        self.args = parsed_args
 
-# render to jsx
-# need jsx embed
-# | jsx { <XYPlot></XYPlot> }
-# | <XYPlot></XYPlot>
-# | @py.whatever
-# |
+    # TODO: should this be async? if so, how do we split it by executor?
+    # TODO: if not, what happens for endpoints that have async connect?
+    def open(self):
+        # TODO: recurse into any .open()s for our milkaddr args
+        # TODO: check that their return types match required type args of our handler
+        # TODO: run our handler with those args
+        args = [x.open() if isinstance(x, _Milkaddr) else x for x in self.args]
+        return self.addr_handler(*args)
 
-# core functionality:
-# rerun on cell change
-# => mark commands as pure
-#
+READ = 'r'
+WRITE = 'w'
+PAIR = 'rw'
+def parse_milkaddr(addr: str, mode: str):
+    parts = addr.split(":")
+    args = [a.split(",") for a in parts]
+    assert len(args) > 1
+    assert len(args[0]) == 1
 
-# language nesting rules:
-# - python:
-#   {}: allowed, mean dicts
-#   comments: # to end of line, unless quoted
-#   quoting: f[stringblock] allows escaping back to python with {} (unless ({{|}})), but is otherwise a stringblock. stringblock can be started with ("""|'''|"|'), and ends with the matching thing.
-# - js:
-#   {}: allowed, mean either objects or blocks
-#   comments: // to end of line, /* to */
-#   quoting: three types: `x`, "x"/'x', /x/. `` allows ${js}, escaped by backslash. ""/'' allow escaped "/', by backslash. /x/ allows escaped /, by backslash or character class.
-# - erlang:
-#   {}: allowed, mean tuples or types
-#   comments: % to end of line
-#   quoting: '' or "", and $char for in-code char escaping. backslash followed by anything, including quote. backslash backslash consumes first.
+    return _Milkaddr((args[0], args[1:]))
 
 
-def command(targets):
-    def inner(cls):
-        commands[cls.__name__] = cls
-        compilers = set(
-            [
-                name.replace("compile_", "")
-                for name, val in vars(cls).items()
-                if name.startswith("compile_") and type(val) == staticmethod
-            ]
-        )
-        assert compilers == set(targets)
-
-        for target in targets:
-            commands_by_target.setdefault(target, {})[cls.__name__] = cls
-
-        # TODO: exception guards
-        # TODO: vm hang guards
-        # TODO: function argument info
-        # TODO: function argument type info
-        return cls
+def milkaddr_handler(*types):
+    def inner(func):
+        if _Milkaddr in types:
+            assert types.index(_Milkaddr) == len(types) - 1
+        addr_handlers[func.__name__] = (func, types)
+    return inner
 
 
-@command
-async def stdin(*a):
-    return sys.stdin
+@milkaddr_handler(int)
+def fd_read(fd):
+    import trio.hazmat
+    return trio.hazmat.FdStream(int(fd))
 
 
-@command
-async def subprocess(*a):
+@milkaddr_handler(int)
+def fd_write(fd):
+    return fd_read(fd)
+
+
+@milkaddr_handler(int, int)
+def fd(fd1, fd2=None):
+    if fd2 is None:
+        return fd_read(fd)
+
+@milkaddr_handler(_Milkaddr)
+def newlines(bytestream):
+    # TODO: iterate through blocks of the bytestream, accumulating into a buffer, and return newline separated chunks
     pass
 
 
-@command
-async def echo(inputs, *args):
-    yield
 
 
-@functools.lru_cache(50)
-def recache(r):
-    return re.compile(r, re.VERBOSE | re.DOTALL)
 
+class Module:
+    def __init__(self, *, default_command=None):
+        self.commands = {
+            "builtin:default": self.run_default_command,
 
-def tokenize_python(string):
-    offset = recache("[ ]*{").match(string).end()
-    start = offset
-    end = offset
-    depth = 1
-    python_tokens = []
-    ranges = []
-    while offset < len(string):
-        match = recache(
-            r"""
-            (
-                \#[^\n]*\n
-                | \"""(?:\\\\|\\"|(?!\""").)*\"""
-                | '''(?:\\\\|\\'|(?!''').)*'''
-                | "(?:\\\\|\\"|[^"])*"
-                | '(?:\\\\|\\'|[^'])*'
-                | [{}]
-                
-            )
-            """
-        ).search(string, offset)
-        if not match:
-            break
-        token = match.group(1)
-        offset = match.end()
-        if token == '{':
-            depth += 1
-        if token == '}':
-            depth -= 1
-        if depth == 0:
-            end = match.start()
-            break
-        ranges.append((match.start(), match.end()))
-        python_tokens.append(token)
-    return ["{", string[start:end], "}"], string[offset:], python_tokens, ranges
+        }
 
+    def language_block(self, func):
+        self.commands[f"lb:{func.__name__}"] = func
 
-# three types: `x`, "x"/'x', /x/. `` allows ${js}, escaped by backslash. ""/'' allow escaped "/', by backslash. /x/ allows escaped /, by backslash or character class.
-js_grammar = parsley.makeGrammar(
-    r"""
-    newline = '\n'
-    backtick = "`"
-    single_quote = "'"
-    double_quote = '"'
-    backslash = :x ?(x == "\\")
-    comment_start = "//"
-    block_comment_start = "/*"
-    block_comment_end = "*/"
-    slash = "/"
-    open_bracket = '['
-    close_bracket = ']'
-    open_curly = '{'
-    close_curly = '}'
-    character_class = open_bracket (backslash anything | ~close_bracket anything)* close_bracket 
-    string = (backtick ("${" js close_curly | backslash anything | ~backtick anything)* backtick
-            | slash (backslash anything | character_class | ~slash anything)* slash 
-            | double_quote (backslash anything | ~double_quote anything)* double_quote
-            | single_quote (backslash anything | ~single_quote anything)* single_quote)
-    js_element = (open_curly js close_curly 
-                    | comment_start (~newline anything)* newline
-                    | block_comment_start (~block_comment_end anything)* block_comment_end
-                    | ~comment_start string
-                    | ~open_curly ~close_curly ~block_comment_start ~comment_start anything
-                    )
-    js = js_element*
-    top = ' '* '{' <js>:j '}' <anything*>:rest  -> ['{', j, '}'], rest
-    """,
-    {},
-)
+    def main(self, argv):
+        command, input, output, debug = argv
+        # args = parser.parse_args(argv)
+        if ":" not in command:
+            command = f"builtin:{command}"
+        command_fn = self.commands[command]
+        stdin = open_input(input)
+        stdout = open_output(output)
+        command_fn(stdin, stdout)  # , debug
 
-
-def parse_js(string):
-    try:
-
-        return js_grammar(string).top()
-    except parsley.ParseError:
-        print(f"Error parsing string: <<<{string}>>>")
-        raise
-
-
-def parse_python_block(string):
-    milkshell_tokens, remainder, python_tokens, python_token_ranges = tokenize_python(string)
-    return milkshell_tokens, remainder
-
-
-def check_tokenize_js(code):
-    prefix = "   {    " + code + "    }"
-    target_milkshell_tokens = ["{", "    " + code + "    ", "}"]
-
-    s = prefix + code[::-1]
-
-    milkshell_tokens, remainder = parse_js(s)
-    assert milkshell_tokens == target_milkshell_tokens
-    assert remainder == code[::-1]
-    print("success")
-
-
-def check_tokenize_python(code):
-    prefix = "   {    " + code + "    }"
-    target_milkshell_tokens = ["{", "    " + code + "    ", "}"]
-
-    s = prefix + code[::-1]
-    milkshell_tokens, remainder, python_tokens, python_token_ranges = tokenize_python(s)
-
-    try:
-        assert milkshell_tokens == target_milkshell_tokens
-        assert remainder == code[::-1]
-
-        s = "        {    " + code + "    }" + code
-        milkshell_tokens, remainder, python_tokens, python_token_ranges = tokenize_python(s)
-        assert milkshell_tokens == target_milkshell_tokens
-        assert remainder == code
-    except AssertionError:
-
-        lastend = 0
-        import sys
-
-        sys.stdout.write("START")
-        for start, end in python_token_ranges:
-            sys.stdout.write("\033[m" + s[lastend:start])
-            sys.stdout.write(
-                "\033[m\033[32m<\033[m\033[42m"
-                + s[start:end].replace("\n", "\033[m\n\033[42m")
-                + "\033[m\033[32m>\033[m"
-            )
-            lastend = end
-        sys.stdout.write("\033[m" + s[lastend:])
-        sys.stdout.write("END")
-        sys.stdout.flush()
-        raise
-    assert tokenize("hello |    @py " + prefix) == ["hello", "|", "@py"] + target_milkshell_tokens
-    assert tokenize("@py" + prefix.strip()) == ["@py"] + target_milkshell_tokens
-
-    return python_tokens
-
-
-def test_tokenize_python():
-    assert check_tokenize_python("") == []
-    assert check_tokenize_python("1") == []
-    q = check_tokenize_python(
-        """   
-     {
-     eggbert \""" "hello" there! \""" def derp(hello:) completely! invalid! syntax!
-      r'''\n ' ' '\\n ' r' ' \n' \\n''' # this is a comment, }}}}} and should not  be interpreted " as anything else \"""
-      {} {{} } {{{}{}}}
-
-     } """
-    )
-    assert q == [
-        '{',
-        '""" "hello" there! """',
-        "'''\n ' ' '\\n ' r' ' \n' \\n'''",
-        '# this is a comment, }}}}} and should not  be interpreted " as anything else """\n',
-        '{',
-        '}',
-        '{',
-        '{',
-        '}',
-        '}',
-        '{',
-        '{',
-        '{',
-        '}',
-        '{',
-        '}',
-        '}',
-        '}',
-        '}',
-    ]
-    q = check_tokenize_python(open(__file__).read() + "\n")
-    assert q is not None
-
-
-# def test_tokenize_python_slow():
-#    for x in set(itertools.chain.from_iterable(glob.glob(x + "**.py") + glob.glob(x + "/**/*.py") for x in sys.path if x and not x.endswith(".zip"))):
-#        try:
-#            check_tokenize_python(open(x).read() + "\n")
-#        except UnicodeDecodeError: continue
-
-
-def test_parse_js():
-    check_tokenize_js("")
-    check_tokenize_js("hello there")
-    check_tokenize_js("hello { there } friend")
-
-    check_tokenize_js("hello { there// } friend\n} real ending")
-    check_tokenize_js("hello { there// } fr/*iend\n} real ending /* {{{ \n // */ end")
-    check_tokenize_js("' this is a string'")
-    check_tokenize_js("'`\"this is a string with other string types nested'")
-    check_tokenize_js("`b'ack'ticks`")
-    check_tokenize_js('"`b\'ack\'ticks"')
-    check_tokenize_js('"escaping: \\" "')
-    check_tokenize_js(
-        "hello { there// } fr/*iend\n} real 'ending'                /* {{{ \n // */ end"
-    )
-    check_tokenize_js(
-        "hello { there// } fr/*iend\n} real 'hello \\' world' ending /* {{{ \n // */ end"
-    )
-    check_tokenize_js(r"""
-        var a = /asd(around th[/]e world)/;
-        var b = /asd(around th[\/]e world)/;
-        var c = /asd(around th\/e world)/;
-        var d = /asd(around ${around the world}th\/e world)/;
-    """)
-    check_tokenize_js(r"""var a = /[^[\]]/;""")
-    check_tokenize_js(r"""var a = /\[[^[\]]/;""")
-    check_tokenize_js(r"""var a = /\[[^[\]]["']/;""")
-    check_tokenize_js(r"""var a = /\[[^[\]]["'][^\\]/;""")
-    check_tokenize_js(r"""
-    // comment with slash/in it
-    """)
-    check_tokenize_js("a = `${/}/}`")
-
-def test_tokenize_js_2():
-    check_tokenize_js([r"""
-
-        
-var isSymbol = require('./isSymbol');
-
-function baseSortedIndexBy(array, value, iteratee, retHighest) {
-  value = iteratee(value);
-
-  var low = 0,
-      high = array == null ? 0 : array.length,
-      valIsNaN = value !== value,
-      valIsNull = value === null,
-      valIsSymbol = isSymbol(value),
-      valIsUndefined = value === undefined;
-
-  while (low < high) {
-    var mid = nativeFloor((low + high) / 2),
-        computed = iteratee(array[mid]),
-        othIsDefined = computed !== undefined,
-        othIsNull = computed === null,
-        othIsReflexive = computed === computed,
-        othIsSymbol = isSymbol(computed);
-
-    if (valIsNaN) {
-      var setLow = retHighest || othIsReflexive;
-    } else if (valIsUndefined) {
-      setLow = othIsReflexive && (retHighest || othIsDefined);
-    } else if (valIsNull) {
-      setLow = othIsReflexive && othIsDefined && (retHighest || !othIsNull);
-    } else if (valIsSymbol) {
-      setLow = othIsReflexive && othIsDefined && !othIsNull && (retHighest || !othIsSymbol);
-    } else if (othIsNull || othIsSymbol) {
-      setLow = false;
-    } else {
-      setLow = retHighest ? (computed <= value) : (computed < value);
-    }
-    if (setLow) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-  return nativeMin(high, MAX_ARRAY_INDEX);
-}
-
-module.exports = baseSortedIndexBy;
-
-
-
-    """][0])
-
-
-def test_tokenize_js_slow():
-    return
-    js_dirs = glob.glob(
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "**/node_modules")
-    )
-    for x in set(
-        itertools.chain.from_iterable(
-            glob.glob(x + "**.js") + glob.glob(x + "/**/*.js") for x in js_dirs
-        )
-    ):
-        try:
-            check_tokenize_js(open(x).read() + "\n")
-        except UnicodeDecodeError:
-            continue
-
-
-languages = {"py": parse_python_block}
-
-
-def tokenize(string):
-    tokens = []
-    while len(string):
-        match = re.search(
-            r"""
-            (
-                [|\n]
-                | "(?:\\"|[^"])*"
-                | '[^']*'
-                | @[a-zA-Z]+
-                | [^ |\n]+
-            )
-            """,
-            string,
-            re.VERBOSE,
-        )
-        if not match:
-            return tokens
-        token = match.group(1)
-        string = string[match.end() :]
-        tokens.append(token)
-        if token.startswith("@"):
-            language = languages[token[1:]]
-            ms_tokens, string = language(string)
-            tokens.extend(ms_tokens)
-            continue
-    return tokens
-
-
-grammar = parsley.makeGrammar(
-    r"""
-    pipe = '|'
-    newline = '\n'
-    word = ~pipe ~newline :x -> x
-    command = word+
-    comment = '#' (~newline :x)*
-    pipeline = (command:first ((comment? newline)? pipe (comment? newline)? command)*:rest -> [first] + rest)
-    logical_line = newline* pipeline?:p comment? -> p
-    document = logical_line:first (newline logical_line)*:rest newline* -> [x for x in [first] + rest if x]
-    """,
-    {},
-)
-
-
-def parse(s):
-    tokens = tokenize(s)
-    return grammar(tokens).document()
-
-
-def test_tokenize():
-    assert tokenize(r"hello there |friend| derp \|herp ") == [
-        "hello",
-        "there",
-        "|",
-        "friend",
-        "|",
-        "derp",
-        "\\",
-        "|",
-        "herp",
-    ]
-    assert tokenize("hello\nthere") == ["hello", "\n", "there"]
-
-
-def test_parse():
-    assert parse(r"hello there |friend| derp \|herp ") == [
-        [["hello", "there"], ["friend"], ["derp", "\\"], ["herp"]]
-    ]
-
-
-def test_line_split_parse():
-    assert parse("hello \n | there") == [[["hello"], ["there"]]]
-    assert parse("hello | \n there") == [[["hello"], ["there"]]]
-    assert parse("hello \n there") == [[["hello"]], [["there"]]]
-    with pytest.raises(parsley.ParseError):
-        parse("hello \n \n | there")
-
-
-def test_no_missing_command():
-    with pytest.raises(parsley.ParseError):
-        parse("| there")
-    with pytest.raises(parsley.ParseError):
-        parse("|")
-    with pytest.raises(parsley.ParseError):
-        parse("|")
-
-
-def test_empty_parse():
-    assert parse("") == []
-
-
-# command definition:
-# - name
-# - parameter types
-# - input type
-# - output type
-# - for each language, command compiler
-
-# parameters can be
-# - concrete value
-#     - language block
-# - variable
-
-
-# def test_language_grouping():
-#    parsed = parse("")
-#    group_languages()
-
-
-def milkeval(pipeline):
-    arg = sys.stdin
-    for cmd in pipeline:
-        cmd_name = cmd[0]
-        rest = cmd[1:]
-        launch_func = commands[cmd_name]
-        arg = launch_func(arg, *rest)
-    for message in arg:
-        print(message)
-
-
-# @pytest.mark.asyncio
-# def test_run_simple():
-#    result = milkeval(parse("echo hello"))
-
-
-def run_repl():
-    running = True
-    while running:
-        pass
-
-
-if __name__ == "__main__":
-    test_parse()
-    test_tokenize()
+    def run_default_command(self, stdin, stdout):
+        raise NotImplementedError("No default command")

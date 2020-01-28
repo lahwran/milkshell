@@ -1,13 +1,16 @@
 #![allow(dead_code)]
 #![deny(unused_must_use)]
 
-
 extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
-#[macro_use] extern crate lazy_static;
+#[macro_use]
+extern crate lazy_static;
 extern crate regex;
+extern crate serde_json;
+use std::fmt::Write;
+use std::process::Command;
 
 extern crate unindent;
 
@@ -22,13 +25,13 @@ use pest::Parser;
 #[grammar = "milkshell.pest"]
 pub struct MilkshellParser;
 
+use crate::ArgumentValue::{CommandReference, LanguageBlock, PlainString, VariableReference};
 use crate::Env::{Javascript, Python};
 use crate::SharedInvocationPipe::StandardIn;
 use std::error::Error;
-use std::fs;
 use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::{fs, iter};
 
 // one possible implementation of walking a directory only visiting files
 fn visit_dirs(dir: &Path, cb: &dyn Fn(&Path)) -> io::Result<()> {
@@ -168,13 +171,32 @@ fn prepare_operator(token: Pair<Rule>, env: Env) -> (ArgumentValue, Option<Env>)
     }
 }
 
-fn prepare_argument(argument: Pair<Rule>, _env: Env) -> (ArgumentValue, Option<Env>) {
+fn prepare_argument(token: Pair<Rule>, env: Env) -> (ArgumentValue, Option<Env>) {
     //println!("         => argument: {}", argument);
     // TODO: return language block struct or something, changing environment when needed
-    (
-        ArgumentValue::PlainString(argument.as_str().to_string()),
-        None,
-    )
+    //println!("         => operator: {}", operator);
+    match token.as_rule() {
+        Rule::language_block => {
+            let lb = token.into_inner().next().unwrap();
+            let (block_string, new_env) = match lb.as_rule() {
+                Rule::python_block => (lb.into_inner().next().unwrap().as_str(), Python),
+                Rule::js_block => (lb.into_inner().next().unwrap().as_str(), Javascript),
+                _ => panic!("unhandled language block type"),
+            };
+            assert_eq!(env, new_env);
+            (
+                ArgumentValue::LanguageBlock(block_string.to_string(), new_env),
+                None,
+            )
+        }
+        Rule::double_string => prepare_double_string(token.into_inner().next().unwrap(), env),
+        Rule::single_string => (
+            ArgumentValue::PlainString(token.into_inner().next().unwrap().as_str().to_string()),
+            None,
+        ), // todo: strip quotes
+        Rule::plain_word => (ArgumentValue::PlainString(token.as_str().to_string()), None),
+        _ => panic!("Unhandled argument type, add to prepare_operator"),
+    }
 }
 
 // plot { milkshell expression on x }
@@ -370,41 +392,160 @@ fn test_js() {
     .unwrap();
 }
 fn codegen_javascript(si: &SharedInvocation) -> ConcreteSharedInvocation {
+    panic!("implement for js");
+}
 
+fn gen_python_arg() {}
+
+// TODO: verify safety
+fn escape_string_python(s: &str) -> String {
+    serde_json::to_string(s).expect("Escape_string_python is immune to your existence")
+}
+
+fn strip_indent(code: &str) -> String {
+    let mut stripped = "".to_string();
+    let mut indent = None;
+
+    for line in code.split("\n") {
+        let line_indent = line.find(|x| x != ' ');
+        match (line_indent, indent) {
+            (None, _) => (),
+            (Some(line_indent), Some(indent)) => {
+                assert!(line_indent >= indent);
+            }
+            (Some(line_indent), None) => indent = Some(line_indent),
+        };
+        if let None = line_indent {
+            write!(stripped, "\n").expect("write failed");
+        } else {
+            let (_, after) = line.split_at(indent.unwrap());
+
+            write!(stripped, "{}{}\n", " ".repeat(4).as_str(), after).expect("write failed");
+        }
+        //prelude +=
+    }
+    stripped
+}
+
+fn serialize_argument_for_python_source(arg: &ArgumentValue, prelude: &mut String) -> String {
+    match arg {
+        PlainString(val) => escape_string_python(val),
+        CommandReference(val) => format!("milkshell.lookup_command({})", escape_string_python(val)),
+        VariableReference(val) => {
+            format!("milkshell.lookup_variable({})", escape_string_python(val))
+        }
+        LanguageBlock(code, _environ) => {
+            let name = format!("v{}", prelude.len());
+            write!(
+                prelude,
+                "@milk.language_block\ndef {}(seq):\n{}",
+                name,
+                strip_indent(code)
+            )
+            .expect("write failed");
+
+            name
+        }
+    }
+}
+
+// TODO: move this into something serde/language target agnostic/host environment agnosting/etc
+fn serialize_for_python_source(si: &SharedInvocation) -> (String, String) {
+    let mut prelude = "".to_string();
+    let val = format!(
+        "({},)",
+        si.ops
+            .iter()
+            .map(|op| {
+                format!(
+                    "({},)",
+                    iter::once(&op.operator)
+                        .chain(op.arguments.iter())
+                        .map(|x| serialize_argument_for_python_source(x, &mut prelude))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    return (prelude, val);
 }
 
 fn codegen_python(si: &SharedInvocation) -> ConcreteSharedInvocation {
-    let mut result = (
-        "\
-        import milkshell\n\
-        import trio\n\n\
-        ".to_string());
-
+    let (prelude, default_command) = serialize_for_python_source(si);
     for (idx, op) in si.ops.iter().enumerate() {
         for (arg_idx, arg) in op.arguments.iter().enumerate() {
             gen_python_arg();
-            match arg {
-
-            }
         }
     }
+    let code = format!(
+        "\
+        import milkshell\n\
+        import trio\n\
+        import sys\n\n\
+        milk = milkshell.Module()\n\n\
+        {}\n\n\
+        milk.default_pipeline = {}\n\
+        if __name__ == '__main__': milk.main(sys.argv)\
+        ",
+        prelude,
+        default_command
+    );
     ConcreteSharedInvocation {
-        environment: Env::Python,
-        code: format!(),
+        environment: si.environment,
+        code,
         pipe_in: si.pipe_in,
-        pipe_out: si.pipe_out
+        pipe_out: si.pipe_out,
     }
 }
 
 fn codegen(si: &SharedInvocation) -> ConcreteSharedInvocation {
     match si.environment {
         Python => codegen_python(si),
-        Javascript => codegen_javascript(si)
+        Javascript => codegen_javascript(si),
     }
 }
 
+const PYTHON_BIN: &'static str = "/Users/lahwran/milkshell/python/.venv/bin/python";
+const PYTHON_WORKDIR: &'static str = "/Users/lahwran/milkshell/python/";
+
 fn side_effect_run_pipeline(pipeline: &Vec<SharedInvocation>) {
-    let generated_code = pipeline.map(codegen);
+    let launched_processes = pipeline
+        .iter()
+        .map(codegen)
+        .map(|code| {
+            let debug_connector = "json:delimited:fd:6,7";
+            let previous_connector = "json:delimited:fd:0";
+            let next_connector = "fd:1";
+            println!("--- PYTHON CODE ---\n{}\n--- END ---", code.code);
+
+            Command::new(PYTHON_BIN)
+                .current_dir(PYTHON_WORKDIR)
+                .arg("-c")
+                .arg(code.code)
+                .arg("default")
+                .arg(previous_connector)
+                .arg(next_connector)
+                .arg(debug_connector)
+                .spawn()
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let collected = launched_processes
+        .into_iter()
+        .map(|mut process| process.wait())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    println!("run:\n{:?}", collected);
+    // 0. determine connection strategy, generate link instructions
+    // 1. compile
+    //      - locate(/connect) to compiler environment
+    //      - run compiler
+    // 2. run
+    //      - connect to execution environment
+    //      - run binary
 }
 /*
 from milkshell import receiver, output, check_pipeline
