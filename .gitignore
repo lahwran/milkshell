@@ -48,3 +48,4 @@ rebar3.crashdump
 
 
 archive/
+temp/

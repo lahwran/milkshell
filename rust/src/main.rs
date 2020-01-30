@@ -29,6 +29,7 @@ use crate::ArgumentValue::{CommandReference, LanguageBlock, PlainString, Variabl
 use crate::Env::{Javascript, Python};
 use crate::SharedInvocationPipe::StandardIn;
 use std::error::Error;
+use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::{fs, iter};
@@ -481,16 +482,15 @@ fn codegen_python(si: &SharedInvocation) -> ConcreteSharedInvocation {
     }
     let code = format!(
         "\
-        import milkshell\n\
-        import trio\n\
-        import sys\n\n\
-        milk = milkshell.Module()\n\n\
-        {}\n\n\
-        milk.default_pipeline = {}\n\
-        if __name__ == '__main__': milk.main(sys.argv)\
-        ",
-        prelude,
-        default_command
+         import milkshell\n\
+         import trio\n\
+         import sys\n\n\
+         milk = milkshell.Module()\n\n\
+         {}\n\n\
+         milk.default_pipeline = {}\n\
+         if __name__ == '__main__': milk.main(sys.argv)\
+         ",
+        prelude, default_command
     );
     ConcreteSharedInvocation {
         environment: si.environment,
@@ -510,21 +510,42 @@ fn codegen(si: &SharedInvocation) -> ConcreteSharedInvocation {
 const PYTHON_BIN: &'static str = "/Users/lahwran/milkshell/python/.venv/bin/python";
 const PYTHON_WORKDIR: &'static str = "/Users/lahwran/milkshell/python/";
 
+fn tempfile(code: &str, idx: usize, ext: &str) -> String {
+    use std::io::Write;
+    // TODO: allow shutting this writing to tempfile business off and using ram only for eg python where this is possible
+    // TODO: allow specifying which directory to use for tempfiles
+    // TODO: manage deletion of tempfiles better - to start with, do it at all, eg after successful run?
+    fs::create_dir_all("temp").expect("Creating dir failed");
+    let filename = format!("temp/codegen_{}{}", idx, ext);
+    let p = Path::new(&filename).canonicalize().unwrap();
+    let mut f = File::create(&p).expect("Creating tempfile failed");
+    f.write_all(code.as_bytes())
+        .expect("writing to file failed");
+    p.to_str()
+        .expect("Could not convert filename to utf-8 string")
+        .to_string()
+}
+
 fn side_effect_run_pipeline(pipeline: &Vec<SharedInvocation>) {
     let launched_processes = pipeline
         .iter()
         .map(codegen)
-        .map(|code| {
-            let debug_connector = "json:delimited:fd:6,7";
-            let previous_connector = "json:delimited:fd:0";
-            let next_connector = "fd:1";
-            println!("--- PYTHON CODE ---\n{}\n--- END ---", code.code);
+        .enumerate()
+        .map(|(idx, code)| {
+            let debug_connector = "json:newlines:fd:5,6";
+            let previous_connector = "json:newlines:fd:3";
+            let next_connector = "json:newlines:fd:4";
+            let filename = tempfile(&code.code, idx, ".py");
+            let cmd = "default";
+            println!(
+                "running: <python> {:?} {:?} {:?} {:?} {:?}",
+                filename, cmd, previous_connector, next_connector, debug_connector
+            );
+            // TODO: open fds 3:w,4:r,5:w,6:r as pipes, like one normally would with fds 0:w,1:r,2:r
 
             Command::new(PYTHON_BIN)
-                .current_dir(PYTHON_WORKDIR)
-                .arg("-c")
-                .arg(code.code)
-                .arg("default")
+                .arg(filename)
+                .arg(cmd)
                 .arg(previous_connector)
                 .arg(next_connector)
                 .arg(debug_connector)
