@@ -1,6 +1,3 @@
 [submodule "packages/react-use-websocket"]
 	path = packages/react-use-websocket
 	url = git@github.com:lahwran/react-use-websocket.git
-[submodule "submodules/async-std"]
-	path = submodules/async-std
-	url = https://github.com/async-rs/async-std.git

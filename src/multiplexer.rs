@@ -1,7 +1,7 @@
-use futures_intrusive::channel::shared::{channel, Receiver, Sender};
+use async_std::sync::{channel, Receiver, Sender};
 use std::collections::HashMap;
 
-pub(crate) struct SingleHalf<T: Clone> {
+pub(crate) struct SingleHalf<T> {
     subscription_receiver: Receiver<(String, Option<Sender<T>>)>,
     subscriptions: HashMap<String, Sender<T>>,
     // TODO: buffers for messages received with nowhere to send them yet? or should we attempt a guarantee that that can't happen?
