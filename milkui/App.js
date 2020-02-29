@@ -6,19 +6,23 @@
  * @flow
  */
 
-import React, {Fragment, useRef, useState, useCallback, useReducer} from 'react';
+import React, {Fragment, useState} from 'react';
 import {
   SafeAreaView,
-  StyleSheet,
-  ScrollView,
   View,
   Text,
   TextInput,
   StatusBar,
-  Button,
 } from 'react-native';
 import styled from 'styled-components/native';
 
+
+const BASE_COLORS = {
+  mainWhite: '#ede8e1'//'#e6ddce'
+}
+const COLORS = {
+  bg: BASE_COLORS.mainWhite
+}
 
 const StatusLabel = styled(Text)`
   padding: 4px;
@@ -36,7 +40,7 @@ import {
   ReloadInstructions,
 } from './NewAppScreen/index';
 
-import {useWebSocketReconnect} from './ws'
+import { useStreamReducer, useWebSocketReconnect, WSProvider } from './ws'
 
 // TODO: POTENTIAL SECURITY VULNERABILITY
 // remote code can invoke any attribute of funcs :s
@@ -112,7 +116,7 @@ const typehandlers = {
   view__type: handler(({...p}) => <View {...p}/>, [
     ["children", wrappers.optional(unpack.array)]
   ]),
-  plaintext__type: handler(({value}) => <Text style={styles.sectionDescription}>{value}</Text>, [
+  plaintext__type: handler(({value}) => <Text>{value}</Text>, [
     ["value", wrappers.required(unpack.string)]
   ]),
   textinput__type: handler((p) => <RemoteTextInput {...p}/>, [
@@ -127,53 +131,6 @@ const typehandlers = {
   //  ["value", wrappers.required(unpack.integer)]
   //])
 };
-
-
-/* original code: (
-    <Fragment>
-      <StatusBar barStyle="dark-content" />
-      <SafeAreaView>
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          style={styles.scrollView}>
-          <Header />
-          {global.HermesInternal == null ? null : (
-            <View style={styles.engine}>
-              <Text style={styles.footer}>Engine: Hermes</Text>
-            </View>
-          )}
-          <View style={styles.body}>
-            <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>Step One</Text>
-              <Text style={styles.sectionDescription}>
-                Edit <Text style={styles.highlight}>App.js</Text> to change this
-                screen and then come back to see your edits.
-              </Text>
-            </View>
-            <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>See Your Changes</Text>
-              <Text style={styles.sectionDescription}>
-                <ReloadInstructions />
-              </Text>
-            </View>
-            <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>Debug</Text>
-              <Text style={styles.sectionDescription}>
-                <DebugInstructions />
-              </Text>
-            </View>
-            <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>Learn More</Text>
-              <Text style={styles.sectionDescription}>
-                Read the docs to discover what to do next:
-              </Text>
-            </View>
-            <LearnMoreLinks />
-          </View>
-        </ScrollView>
-      </SafeAreaView>
-    </Fragment>
-)*/
 
 function reactjoin(seq, map, joiner) {
   return seq.map((s, i) => i === 0 ? [map(s)] : [joiner(i), map(s)]).flat(1)
@@ -198,110 +155,65 @@ function ParsedTextDemo({value}) {
   return <>{value.map((pipeline, idx) => <ParsedPipeline key={idx} value={pipeline}/>)}</>;
 }
 
-function wsreducer(state, action) {
+function streamReducer(state, action) {
   switch (action.type) {
-    case 'changeValue': return {...state, value: action.value};
-    case 'message':
-      switch (action.data.type) {
-        case 'parsed':
-          return {...state, parsed: action.data.value, error: null};
-        case 'mismatch':
-          return {...state, parsed: null, error: action.data}
+    case 'receive':
+      switch (action.message.type) {
         default:
-          console.log("unknown message", action.data)
-          return state;
-
+          return {...state, messages: [...state.messages, action.message]}}
+    case 'send':
+      switch (action.message.type) {
+        case 'inputChange':
+          return {...state, value: action.message.value}
+        default: return state
       }
+    default: return state
   }
 }
-function WsTest() {
-  const [state, dispatch] = useReducer(wsreducer, {meta: [], value: '', error: null});
+function Commands() {
+  //const [state, dispatch] = useReducer(wsreducer, {meta: [], value: '', error: null});
+  const [state, send] = useStreamReducer("default", streamReducer, {
+    value: '',
+    commands: [],
+    messages: [],
+    commandsLoaded: false
+  })
 
-  const wsinfo = useWebSocketReconnect("ws://localhost:8080/websocket", {
-    timeout: 8000,
-    onMessage: (data) => {
-      dispatch({type: 'message', data})
-    },
-    onError: event => {
-      console.log('error', event)
-    },
-    onOpen: ({timeStamp}) => {
-      console.log('open', timeStamp)
-      wsinfo.send(state.value)
-    },
-    onClose: event => {
-      console.log('close', event)
-    }
-  });
-  const handleChange = useCallback(event => {
-    const value = event.target.value;
-    wsinfo.send(value);
-    dispatch({type: 'changeValue', value});
-  }, [wsinfo.send, dispatch]);
+  //const handleChange = useCallback(event => {
+  //  const value = event.target.value;
+  //  wsinfo.send(value);
+  //  dispatch({type: 'changeValue', value});
+  //}, [wsinfo.send, dispatch]);
   return <>
-    <TextInput multiline={true} onChange={handleChange} value={state.value}/>
-    <ParsedTextDemo value={state.parsed}/>
-    <StatusLabel>{wsinfo.status}</StatusLabel>
+    <TextInput multiline={true} onChange={event => send({type: "inputChange", value: event.target.value})} value={state.value}/>
+    {/*<ParsedTextDemo value={state.parsed}/>*/}
+    <StatusLabel>{state.status}</StatusLabel>
     <Monospace>{'State:\n'}{JSON.stringify(state, null, 4)}</Monospace>
-    <Monospace>{'Last message:\n'}{JSON.stringify(wsinfo.last)}</Monospace>
   </>
 }
 
-const streamdispatch = (arg1, arg2) => console.log(arg1, arg2)
 const App = () => {
-  const tree = ["view", {
-    "children": [
-      ["plaintext", {value: "hello world"}],
-      ["textinput", {value: "derp", onChange: ["stream", {sid: 1}]}]
-    ]
-  }];
+  //const tree = ["view", {
+  //  "children": [
+  //    ["plaintext", {value: "hello world"}],
+  //    ["textinput", {value: "derp", onChange: ["stream", {sid: 1}]}]
+  //  ]
+  //}];
   //console.log("hello", {}?.derp?.herp());
   //{unpack.tagged(tree, streamdispatch)}
-  return <Fragment>
-    <StatusBar barStyle="dark-content" />
-    <SafeAreaView>
-      <WsTest/>
-    </SafeAreaView>
-  </Fragment>
+  return <WSProvider url={"ws://localhost:13579/websocket"}>
+      <MainView>
+      <StatusBar barStyle="dark-content" />
+      <SafeAreaView>
+        <Commands/>
+      </SafeAreaView>
+    </MainView>
+  </WSProvider>
 };
 
-const styles = StyleSheet.create({
-  scrollView: {
-    backgroundColor: Colors.lighter,
-  },
-  engine: {
-    position: 'absolute',
-    right: 0,
-  },
-  body: {
-    backgroundColor: Colors.white,
-  },
-  sectionContainer: {
-    marginTop: 32,
-    paddingHorizontal: 24,
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: Colors.black,
-  },
-  sectionDescription: {
-    marginTop: 8,
-    fontSize: 18,
-    fontWeight: '400',
-    color: Colors.dark,
-  },
-  highlight: {
-    fontWeight: '700',
-  },
-  footer: {
-    color: Colors.dark,
-    fontSize: 12,
-    fontWeight: '600',
-    padding: 4,
-    paddingRight: 12,
-    textAlign: 'right',
-  },
-});
+const MainView = styled(View)`
+  background-color: ${COLORS.bg};
+  height: 100%;
+`
 
 export default App;

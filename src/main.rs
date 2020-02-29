@@ -10,7 +10,9 @@ extern crate lazy_static;
 extern crate regex;
 extern crate serde_json;
 use std::fmt::Write;
-use std::process::Command;
+
+use tokio;
+use tokio::process::{Child, Command};
 
 extern crate unindent;
 
@@ -28,11 +30,18 @@ pub struct MilkshellParser;
 use crate::ArgumentValue::{CommandReference, LanguageBlock, PlainString, VariableReference};
 use crate::Env::{Javascript, Python};
 use crate::SharedInvocationPipe::StandardIn;
+use futures::Future;
 use std::error::Error;
 use std::fs::File;
-use std::io;
 use std::path::Path;
 use std::{fs, iter};
+use std::{io, thread, time};
+
+use futures::future::join_all;
+use tokio::runtime::Runtime;
+
+mod multiplexer;
+mod ws;
 
 // one possible implementation of walking a directory only visiting files
 fn visit_dirs(dir: &Path, cb: &dyn Fn(&Path)) -> io::Result<()> {
@@ -325,12 +334,13 @@ fn get_first_langblock(pair: Pair<Rule>) -> Option<String> {
     }
 }
 
-fn test_python() {
+async fn test_python() {
     let pypath = String::from_utf8(
         Command::new("python3")
             .arg("-c")
             .arg("import sys; print('\\n'.join(sys.path))")
             .output()
+            .await
             .expect("Failed to execute command")
             .stdout,
     )
@@ -526,7 +536,7 @@ fn tempfile(code: &str, idx: usize, ext: &str) -> String {
         .to_string()
 }
 
-fn side_effect_run_pipeline(pipeline: &Vec<SharedInvocation>) {
+async fn side_effect_run_pipeline(pipeline: &Vec<SharedInvocation>) {
     let launched_processes = pipeline
         .iter()
         .map(codegen)
@@ -553,13 +563,10 @@ fn side_effect_run_pipeline(pipeline: &Vec<SharedInvocation>) {
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let collected = launched_processes
-        .into_iter()
-        .map(|mut process| process.wait())
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
 
-    println!("run:\n{:?}", collected);
+    join_all(launched_processes).await;
+
+    //println!("run:\n{:?}", collected);
     // 0. determine connection strategy, generate link instructions
     // 1. compile
     //      - locate(/connect) to compiler environment
@@ -591,16 +598,11 @@ async def main():
 trio.run(main)
 */
 
-fn main() {
-    //let s = "@py { derp derp derp }";
-    //parse_milkshell(s).unwrap();
-    //test_python();
-    //test_js();
-    // @py { function_name }
-    // @py { operation on input per message }
-    // @py { multiline operation on input, with wait on other operations }
-    // @py { for loop over input messages }
+// addr is an enum specifying how to connect
+// ideally could choose per process whether to connect as stream or as sink, where streams
+// launch_pipeline(Vec<f(input_source_addr, output_sink_addr, debug_socket_addr) -> supervision_handle>)
 
+async fn asyncmain() {
     let res = compile(
         parse(
             r##"
@@ -614,7 +616,90 @@ fn main() {
     )
     .unwrap();
     for pipeline in &res {
-        side_effect_run_pipeline(pipeline);
+        side_effect_run_pipeline(pipeline).await;
     }
     println!("compile result: {:?}", &res)
+}
+
+async fn run_core(m: multiplexer::MultiHalf<serde_json::Value>) {}
+
+#[tokio::main]
+async fn main() {
+    let (single, multi) = multiplexer::multiplexer(1, 1);
+
+    tokio::spawn(async move {
+        run_core(multi).await;
+    });
+    // multiplexer receives messages and sends them on to the appropriate channel
+    // multiplexer has two parts:
+    // 1. the sender, which goes to the websocket and contains the appropriate stream pair,
+    //      as well as one additional stream: a Source<Tuple<String, Option<Sink<message>>>>. this will receive messages to associate streams with their io.
+    //      messages received over the websocket connection will be sent to the appropriate place, queueing them if necessary. (TODO: backpressure something or other)
+    // 2. the receiver, which goes to the core and contains the other stream pair, and which can return substream io pairs by name. when you do that,
+    //      it sends a (name, Some(Sink)) message with the write sink to the new streampair over the queue to the sender, and then it returns a struct that contains a copy
+    //      of the main sink for the websocket and the name of the stream. when sending messages, it wraps them into the name and the message, and sends them on.
+    //      (TODO: it may need a .close() method to get order of closes and drains right - you can't send a disconnect request on drop of the rx side, and there's a race condition with sending a drop just after a message sent to the tx side)
+    //      the receiver keeps track of which streams it's handed out and gets cranky if one is asked for while it's in use.
+    // the startup process:
+    // 1. create the multiplexer. this will require two channels set up as two stream pairs, and
+    //      a channel for the stream stream. it will produce a tuple of two structs.
+    // 2. pass the parts to the two ends - the core task and the websocket task.
+    // 3. in the core task, pull out the command list stream from the multiplexer. it allows appending and removing commands, and getting the count (?) of current commands.
+    //      it only acts on message from the client, so simply iterate client incoming messages, update state, and send replies. maintain an array of the references for command handlers,
+    //      and launch/shut down the command handlers when they're appended or deleted (or frozen?)
+    // 4. launch command handlers for each slot, with a state update loop like a reducer, sending back the full state
+    //      of the command every time anything happens. handle at least {set text: value}, which updates a parse in state, and {run}, which launches the processes with new stream ids, passing each stream id into each process launch,
+    //      and updates the state with their stream ids. might not need anything else for now.
+    //
+    ws::run_websocket(single).await.unwrap()
+    //asyncmain().await
+}
+
+//fn main() {
+//println!("main thread starts.");
+//thread::spawn(move || {
+//println!("io thread starts.");
+//let mut rt = Runtime::new().unwrap();
+//rt.block_on(asyncmain_wrapper());
+//println!("io thread complete.");
+//});
+//println!("main thread launched io thread.");
+//for idx in 0..100 {
+//    println!("iter {:?}/100 of waiter loop. waiting 1 seconds...", idx);
+//    let dur = time::Duration::from_secs(1);
+//    thread::sleep(dur);
+//}
+
+//println!("Main thread complete.");
+//}
+
+fn oldmain() {
+    //let s = "@py { derp derp derp }";
+    //parse_milkshell(s).unwrap();
+    //test_python();
+    //test_js();
+    // @py { function_name }
+    // @py { operation on input per message }
+    // @py { multiline operation on input, with wait on other operations }
+    // @py { for loop over input messages }
+
+    // current code:
+    //let res = compile(
+    //    parse(
+    //        r##"
+    //            map @py {
+    //                v + 1
+    //            } | @py { import derp; print("hello") } around the world
+    //        "##,
+    //    )
+    //    .unwrap(),
+    //    Python,
+    //)
+    //.unwrap();
+    //for pipeline in &res {
+    //    side_effect_run_pipeline(pipeline);
+    //}
+    //println!("compile result: {:?}", &res)
+
+    //net::net_test_main().unwrap();
 }

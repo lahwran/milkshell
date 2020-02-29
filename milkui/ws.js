@@ -1,5 +1,5 @@
 
-import {useCallback, useRef, useEffect, useMemo, useState} from 'react';
+import React, {useReducer, useCallback, useRef, useContext, useEffect, useMemo, useState} from 'react';
 import useWebSocket from 'react-use-websocket';
 
 class SanityError extends Error {}
@@ -21,21 +21,21 @@ export default function useWebSocketCustom(url, callbacks) {
   const [last, setLastMessage] = useState(undefined);
   const innerOptions = useMemo(() => ({
     // {isTrusted: bool, etc, data: [message]}
-    onMessage: event => {
+    onMessage(event) {
       const parsed = JSON.parse(event.data);
       setLastMessage(parsed);
       (optrf?.current?.onMessage || noop)(parsed)
     },
-    onClose: event => {
+    onClose(event) {
       (optrf?.current?.onClose || noop)(event)
 
     },
-    onError: event => {
+    onError(event) {
       (optrf?.current?.onError || noop)(event);
     },
 
     // {isTrusted: bool, target: ws, timeStamp: ms after open (I think), type: "open"}
-    onOpen: event => {
+    onOpen(event) {
       (optrf?.current?.onOpen || noop)(event);
     },
   }), []);
@@ -43,7 +43,7 @@ export default function useWebSocketCustom(url, callbacks) {
   const [sendRaw, _, statusInt, reconnect] = useWebSocket(url, innerOptions);
   const status = STATUS_NAMES[statusInt];
   const send = useCallback(message => sendRaw(JSON.stringify(message)), [sendRaw]);
-  return {send, last, status, statusInt, reconnect};
+  return {send, last, status, reconnect};
 }
 
 function useDebounceFn(wait, func, guards=[]) {
@@ -63,18 +63,18 @@ function useDebounceFn(wait, func, guards=[]) {
   }, [funcref, timeout, wait, ...guards]);
 };
 
-export function useWebSocketReconnect(url, {backoffMult=1.5, backoffStep=100, backoffMax=2500, timeout=30000, ...callbacks}) {
+export function useWebSocketReconnect(url, {backoffMult=1.5, backoffStep=100, backoffMax=2500, timeout=3000, ...callbacks}) {
   const wsinfo = useWebSocketCustom(url, {
     ...callbacks,
-    onError: event => {
+    onError(event) {
       (callbacks?.onError || noop)(event);
       reconnectwrapper()
     },
-    onOpen: ({timeStamp}) => {
+    onOpen({timeStamp}) {
       (callbacks?.onOpen || noop)(timeStamp);
       setBackoff(0);
     },
-    onClose: event => {
+    onClose(event) {
       (callbacks?.onClose || noop)(event);
       reconnectwrapper()
     }
@@ -103,10 +103,116 @@ export function useWebSocketReconnect(url, {backoffMult=1.5, backoffStep=100, ba
     }, newBackoffMs);
   }, [wsinfo.reconnect, backoff]);
   const debouncedReconnect = useDebounceFn(1000, () => reconnectwrapper(), [reconnectwrapper]);
-  function send(message) {
+  const send = useCallback((message) => {
     const res = wsinfo.send(message);
     debouncedReconnect();
     return res;
-  }
+  }, [wsinfo.send, debouncedReconnect]);
   return {send, ...wsinfo};
+}
+
+const WebsocketMultiplexContext = React.createContext(null)
+
+export function useStream(name, callbacks) {
+  const api = useContext(WebsocketMultiplexContext);
+  useEffect(() => {
+    return api.subscribe(name, callbacks)
+  }, [api.subscribe, name, callbacks])
+  return useMemo(() => {
+    return {
+      send(message) {
+        api.send(name, message)
+      },
+      status: api.status
+    }
+  }, [name, api.send, api.status])
+}
+
+export function useStreamReducer(name, reducer, initialState) {
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const handlers = useMemo(() => ({
+    onMessage(message) {
+      dispatch({type: "receive", message})
+    },
+    onClose(event) {
+      dispatch({type: "close", event})
+    },
+    onOpen(ts) {
+      dispatch({type: "open", ts})
+    },
+    onError(event) {
+      dispatch({type: "error", event})
+    }
+  }), [dispatch])
+  const {send, status} = useStream(name, handlers);
+  return useMemo(() => (
+    [{...state, streamStatus: status}, ((message, extra) => {
+      dispatch({type: 'send', message, extra})
+      send(message)
+    })]
+  ), [state, status, send])
+}
+
+export function WSProvider({url, children}) {
+  var subscribers = useRef();
+  if (subscribers.current === undefined) {
+    subscribers.current = new Map();
+  }
+
+  const {send, status} = useWebSocketReconnect(url,
+    {
+      onOpen(ts) {
+        for (const v of subscribers.current.values()) {
+          v.onOpen(ts);
+        }
+      },
+      onClose(event) {
+        for (const v of subscribers.current.values()) {
+          v.onClose(event);
+        }
+      },
+      onError(event) {
+        // idk what to do here t b h. maybe only the default stream should be getting notified?
+        for (const v of subscribers.current.values()) {
+          v.onError(event);
+        }
+      },
+      onMessage(message) {
+        const dest = message.stream;
+        if (!subscribers.current.has(dest)) {
+          // TODO: queue the message
+          console.error(`message for unknown stream ${dest}:`, message) // TODO: warn someone a bit louder
+          return
+        }
+        const subscriber = subscribers.current.get(dest)
+        subscriber.onMessage(message);
+      }
+
+    }
+  );
+
+  const api = useMemo(() => ({
+    send(stream_id, message) {
+      send({...message, stream_id})
+    },
+    subscribe(key, handlerRef) {
+      // must be called exactly once from a useEvent(), and its return value returned
+      if (subscribers.current.get(key) !== undefined) {
+        throw new Exception(`key already subscribed: ${key}`)
+      }
+      subscribers.current.set(key, handlerRef);
+      return () => {
+        if (subscribers.current.get(key) !== handlerRef) {
+          throw new Exception(`key subscription replaced before subscription ended: ${key}`)
+        }
+        subscribers.current.delete(key)
+      }
+    },
+    url,
+    status,
+  }), [subscribers, url, status])
+
+  return <WebsocketMultiplexContext.Provider value={api}>
+    {children}
+  </WebsocketMultiplexContext.Provider>
 }
