@@ -1,23 +1,14 @@
-use crossbeam::thread;
 use std::error::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
-use std::{env, time};
 // have to use this particular split function on tcp sockets - tcpstream.split() doesn't work
-use tokio::io::split;
 
-use futures::{join, SinkExt, Stream, StreamExt};
-use std::time::{Duration, Instant};
-use tokio::runtime::Runtime;
+use futures::{SinkExt, StreamExt};
 
 use crate::multiplexer::SingleHalf;
-#[macro_use]
 use futures::future::join_all;
-use futures::prelude::*;
 use serde_json::json;
-use std::collections::HashSet;
 use tokio::select;
 
 async fn accept_connection(stream: TcpStream, mut receiver: mpsc::Receiver<::serde_json::Value>) {
@@ -41,12 +32,16 @@ async fn accept_connection(stream: TcpStream, mut receiver: mpsc::Receiver<::ser
     tokio::spawn(async move {
         // In a loop, read data from the socket and write the data back.
         loop {
-            let msg = reader
-                .next()
-                .await
-                // TODO ERROR: what errors are possible here?
-                .expect("(err 3) failed to read data from socket")
-                .expect("(err 4) tungstenite error");
+            let read_result = reader.next().await;
+            // TODO ERROR: what errors are possible here?
+            let tungstenite_result = read_result.expect("(err 3) failed to read data from socket");
+            let msg = match tungstenite_result {
+                Ok(m) => m,
+                Err(e) => {
+                    println!("Error parsing incoming message with tungstenite, quitting read loop. error: {:?}", e);
+                    return;
+                }
+            };
             // TODO: this could pass around fixed-size buffers with slice lengths, is that faster?
             match msg {
                 tungstenite::Message::Text(string) => {
@@ -105,14 +100,16 @@ pub(crate) async fn run_websocket(
         subscriptions,
         receiver,
     } = single;
-    let (mut subchan_send, subchan_recv) = mpsc::channel(10);
+    let (mut subchan_send, mut subchan_recv) = mpsc::channel(10);
 
+    // TODO: notify this task proactively when an unsubscription happens, rather than waiting for
+    //  it to handle errors writing to a stream?
     tokio::spawn(async move {
         let mut subs = Vec::new();
         loop {
             select! {
                 maybe_subscription = subchan_recv.recv() => {
-                    subs.push(maybe_subscription.expect("subchan_send was somehow dropped"));
+                    subs.push(Some(maybe_subscription.expect("subchan_send was somehow dropped")));
                 },
                 maybe_message = receiver.recv() => {
                     let (stream_id, message) = match maybe_message {
@@ -126,8 +123,19 @@ pub(crate) async fn run_websocket(
                         "stream_id": stream_id,
                         "message": message
                     });
-                    let futures = subs.iter().map(|sub: &mpsc::Sender<serde_json::Value>| sub.send(message_wrapped.clone()));
-                    let results = join_all!(futures).await;
+                    let result = {
+                        let futures = subs.iter_mut().filter_map(|x: &mut Option<mpsc::Sender<serde_json::Value>>| match x {
+                            Some(val) => Some(val.send(message_wrapped.clone())),
+                            None => None
+                        }).enumerate().map(|(idx, future)| async move { tokio::join!(futures::future::ok::<usize, usize>(idx), future) });
+                        join_all(futures).await
+                    };
+                    for (idx, val) in result.iter() {
+                        if !val.is_ok() {
+                            println!("Error sending message to stream, assuming it's gone. error: {:?}", val);
+                            subs[idx.unwrap()] = None;
+                        }
+                    }
                 }
             }
         }
@@ -145,7 +153,10 @@ pub(crate) async fn run_websocket(
     loop {
         let (socket, _) = listener.accept().await?;
         let (local_send, local_recv) = mpsc::channel(10);
-        subchan_send.send(local_send).await;
+        subchan_send
+            .send(local_send)
+            .await
+            .expect("Subscribing to write messages failed");
         accept_connection(socket, local_recv).await;
     }
 }

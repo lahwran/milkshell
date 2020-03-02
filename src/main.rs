@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+//#![feature(type_name_of_val)]
 #![deny(unused_must_use)]
 
 extern crate pest;
@@ -638,35 +639,12 @@ async fn run_core(m: multiplexer::MultiHalf<serde_json::Value>) {
 
 #[tokio::main]
 async fn main() {
-    //let (single, multi) = multiplexer::multiplexer(1, 1);
+    let (single, multi) = multiplexer::multiplexer(1, 1);
 
-    //tokio::spawn(async move {
-    //    run_core(multi).await;
-    //});
-    //ws::run_websocket(single).await.unwrap()
-
-    use std::time::Duration;
-
-    use async_std::sync::channel;
-    use async_std::task;
-
-    let (s, r) = channel(1);
-    let r2 = r.clone();
-
-    // This call returns immediately because there is enough space in the channel.
-    s.send(1).await;
-
-    task::spawn(async move {
-        // This call will have to wait because the channel is full.
-        // It will be able to complete only after the first message is received.
-        s.send(2).await;
+    tokio::spawn(async move {
+        run_core(multi).await;
     });
-
-    task::sleep(Duration::from_secs(1)).await;
-    assert_eq!(r.recv().await, Some(1));
-    assert_eq!(r.recv().await, Some(2));
-    assert_eq!(r2.recv().await, Some(1));
-    assert_eq!(r2.recv().await, Some(2));
+    ws::run_websocket(single).await.unwrap()
 
     // multiplexer receives messages and sends them on to the appropriate channel
     // multiplexer has two parts:

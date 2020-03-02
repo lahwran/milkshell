@@ -160,7 +160,7 @@ function streamReducer(state, action) {
     case 'receive':
       switch (action.message.type) {
         default:
-          return {...state, messages: [...state.messages, action.message]}}
+          return {...state, messages: [action.message, ...(state.messages.length > 5 ? state.messages.slice(0, 5) : state.messages)]}}
     case 'send':
       switch (action.message.type) {
         case 'inputChange':

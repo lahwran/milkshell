@@ -178,7 +178,7 @@ export function WSProvider({url, children}) {
         }
       },
       onMessage(message) {
-        const dest = message.stream;
+        const dest = message.stream_id;
         if (!subscribers.current.has(dest)) {
           // TODO: queue the message
           console.error(`message for unknown stream ${dest}:`, message) // TODO: warn someone a bit louder
