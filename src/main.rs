@@ -9,6 +9,7 @@ extern crate pest_derive;
 extern crate lazy_static;
 extern crate regex;
 extern crate serde_json;
+use serde_json::json;
 use std::fmt::Write;
 
 use tokio;
@@ -38,6 +39,7 @@ use std::{fs, iter};
 use std::{io, thread, time};
 
 use futures::future::join_all;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
 mod multiplexer;
@@ -621,15 +623,51 @@ async fn asyncmain() {
     println!("compile result: {:?}", &res)
 }
 
-async fn run_core(m: multiplexer::MultiHalf<serde_json::Value>) {}
+async fn run_core(m: multiplexer::MultiHalf<serde_json::Value>) {
+    println!("launch core");
+    let (writer, reader) = m.get_stream("default").unwrap();
+    loop {
+        println!("send... {:?}", Instant::now());
+        writer
+            .send(json!({"hello": "there", "it is": format!("{:?}", Instant::now())}))
+            .await;
+        println!("delay... {:?}", Instant::now());
+        tokio::time::delay_for(Duration::from_secs(3)).await
+    }
+}
 
 #[tokio::main]
 async fn main() {
-    let (single, multi) = multiplexer::multiplexer(1, 1);
+    //let (single, multi) = multiplexer::multiplexer(1, 1);
 
-    tokio::spawn(async move {
-        run_core(multi).await;
+    //tokio::spawn(async move {
+    //    run_core(multi).await;
+    //});
+    //ws::run_websocket(single).await.unwrap()
+
+    use std::time::Duration;
+
+    use async_std::sync::channel;
+    use async_std::task;
+
+    let (s, r) = channel(1);
+    let r2 = r.clone();
+
+    // This call returns immediately because there is enough space in the channel.
+    s.send(1).await;
+
+    task::spawn(async move {
+        // This call will have to wait because the channel is full.
+        // It will be able to complete only after the first message is received.
+        s.send(2).await;
     });
+
+    task::sleep(Duration::from_secs(1)).await;
+    assert_eq!(r.recv().await, Some(1));
+    assert_eq!(r.recv().await, Some(2));
+    assert_eq!(r2.recv().await, Some(1));
+    assert_eq!(r2.recv().await, Some(2));
+
     // multiplexer receives messages and sends them on to the appropriate channel
     // multiplexer has two parts:
     // 1. the sender, which goes to the websocket and contains the appropriate stream pair,
@@ -651,7 +689,6 @@ async fn main() {
     //      of the command every time anything happens. handle at least {set text: value}, which updates a parse in state, and {run}, which launches the processes with new stream ids, passing each stream id into each process launch,
     //      and updates the state with their stream ids. might not need anything else for now.
     //
-    ws::run_websocket(single).await.unwrap()
     //asyncmain().await
 }
 
