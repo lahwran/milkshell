@@ -124,16 +124,17 @@ pub(crate) async fn run_websocket(
                         "message": message
                     });
                     let result = {
-                        let futures = subs.iter_mut().filter_map(|x: &mut Option<mpsc::Sender<serde_json::Value>>| match x {
-                            Some(val) => Some(val.send(message_wrapped.clone())),
+                        let futures = subs.iter_mut().enumerate().filter_map(|(idx, x): (usize, &mut Option<mpsc::Sender<serde_json::Value>>)| match x {
+                            Some(val) => Some((idx, val.send(message_wrapped.clone()))),
                             None => None
-                        }).enumerate().map(|(idx, future)| async move { tokio::join!(futures::future::ok::<usize, usize>(idx), future) });
+                        }).map(|(idx, future)| async move { tokio::join!(futures::future::ok::<usize, usize>(idx), future) });
                         join_all(futures).await
                     };
                     for (idx, val) in result.iter() {
+                        let idx = idx.unwrap();
                         if !val.is_ok() {
-                            println!("Error sending message to stream, assuming it's gone. error: {:?}", val);
-                            subs[idx.unwrap()] = None;
+                            println!(" -> Error sending message to stream, assuming it's gone.\n    error: {:?}\n    idx: {:?} streams: {:?}", val, idx, subs);
+                            subs[idx] = None;
                         }
                     }
                 }
