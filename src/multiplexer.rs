@@ -1,10 +1,5 @@
-use async_std::sync::{channel, Receiver, Sender};
-use futures::prelude::*;
-use futures::task::{Context, Poll};
-use futures::{Sink, SinkExt, Stream, StreamExt};
 use std::collections::HashMap;
-use std::error::Error;
-use std::mem;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 pub(crate) struct SingleHalf<T> {
     pub subscription_receiver: Receiver<(String, Option<Sender<T>>)>,
@@ -43,26 +38,36 @@ pub(crate) struct SubstreamWrite<T> {
     name: String,
     sender: Sender<(String, T)>,
 }
-pub(crate) struct SubstreamRead {}
 
 impl<T> SubstreamWrite<T> {
-    pub(crate) async fn send(&self, message: T) {
+    pub(crate) async fn send(
+        &mut self,
+        message: T,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<(String, T)>> {
         self.sender.send((self.name.clone(), message)).await
     }
 }
 
 impl<T> MultiHalf<T> {
-    pub(crate) fn get_stream(
-        &self,
+    pub(crate) async fn get_stream(
+        &mut self,
         stream: &str,
-    ) -> Result<(SubstreamWrite<T>, SubstreamRead), String> {
+        buffer: usize,
+    ) -> Result<
+        (SubstreamWrite<T>, Receiver<T>),
+        tokio::sync::mpsc::error::SendError<(String, Option<Sender<T>>)>,
+    > {
+        let (sender, receiver) = channel(buffer);
+        self.subscription_sender
+            .send((stream.to_string(), Some(sender)))
+            .await?;
         let a = stream.to_string();
         Ok((
             SubstreamWrite {
                 name: stream.to_string(),
                 sender: self.sender.clone(),
             },
-            SubstreamRead {},
+            receiver,
         ))
     }
 }

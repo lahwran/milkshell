@@ -1,3 +1,5 @@
+use serde::Deserialize;
+
 use std::error::Error;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -11,7 +13,11 @@ use futures::future::join_all;
 use serde_json::json;
 use tokio::select;
 
-async fn accept_connection(stream: TcpStream, mut receiver: mpsc::Receiver<::serde_json::Value>) {
+async fn accept_connection(
+    stream: TcpStream,
+    mut receiver: mpsc::Receiver<::serde_json::Value>,
+    mut sender: mpsc::Sender<::serde_json::Value>,
+) {
     let addr = stream
         .peer_addr()
         // TODO: when is this error possible?
@@ -43,13 +49,16 @@ async fn accept_connection(stream: TcpStream, mut receiver: mpsc::Receiver<::ser
                 }
             };
             // TODO: this could pass around fixed-size buffers with slice lengths, is that faster?
-            match msg {
+            let parsed_message = match msg {
                 tungstenite::Message::Text(string) => {
-                    println!("received: {:?}", string);
+                    serde_json::from_str(&string).expect("received invalid json")
+                    //sender.send().await.expect("wat, multiplexer task dropped receiver?"); // TODO: display invalid message on error
+                    //println!("received: {:?}", string);
                     //tx.send(string.into_bytes()).unwrap();
                 }
                 tungstenite::Message::Binary(data) => {
-                    println!("received: {:?}", data);
+                    serde_json::from_slice(&data).expect("received invalid json")
+                    //println!("received: {:?}", data);
                     //tx.send(data).unwrap();
                 }
                 tungstenite::Message::Close(data) => {
@@ -61,7 +70,11 @@ async fn accept_connection(stream: TcpStream, mut receiver: mpsc::Receiver<::ser
                 }
                 // TODO ERROR: handle unknown message types
                 other => panic!(format!("Unknown message type: {:?}", other)),
-            }
+            };
+            sender
+                .send(parsed_message)
+                .await
+                .expect("incoming message receiver was somehow dropped by multiplexer, wat");
         }
     });
 
@@ -90,17 +103,45 @@ async fn accept_connection(stream: TcpStream, mut receiver: mpsc::Receiver<::ser
     });
 }
 
+#[derive(Deserialize, Debug)]
+struct MultiplexedMessage {
+    stream_id: String,
+    message: serde_json::Value,
+}
+
 pub(crate) async fn run_websocket(
     single: SingleHalf<serde_json::Value>,
 ) -> Result<(), Box<dyn Error>> {
     let addr = "127.0.0.1:13579".to_string();
 
     let SingleHalf {
-        subscription_receiver,
-        subscriptions,
-        receiver,
+        mut subscription_receiver,
+        mut subscriptions,
+        mut receiver,
     } = single;
     let (mut subchan_send, mut subchan_recv) = mpsc::channel(10);
+    let (recvchan_send, mut recvchan_recv) = mpsc::channel(10);
+
+    tokio::spawn(async move {
+        loop {
+            select! {
+                maybe_subscription = subscription_receiver.recv() => {
+                    let (name, maybe_sub) = maybe_subscription.expect("multihalf's subscription_sender was dropped, need websocket to shut down cleanly");
+                    match maybe_sub {
+                        Some(sub) => { subscriptions.insert(name, sub); },
+                        None => { subscriptions.remove(&name); }
+                    }
+                },
+                maybe_message = recvchan_recv.recv() => {
+                    let maybe_message = serde_json::from_value(maybe_message.expect("recvchan_send was somehow dropped"));
+                    let message: MultiplexedMessage = maybe_message.expect("FIXME: Got invalid MultiplexedMessage from client"); // TODO: needs better error handling
+                    let subscriber = subscriptions.get_mut(&message.stream_id).expect("FIXME: Got message for subscriber that wasn't listening, this should be handled"); // TODO FIXME: this error can happen during normal functioning
+                    // TODO: a sufficiently backed up stream can hang the multiplexer with backpressure. is this acceptable?
+                    subscriber.send(message.message).await.expect("FIXME: sent message to subscriber that stopped listening while we were trying to send it");
+                }
+            }
+        }
+    });
 
     // TODO: notify this task proactively when an unsubscription happens, rather than waiting for
     //  it to handle errors writing to a stream?
@@ -128,6 +169,8 @@ pub(crate) async fn run_websocket(
                             Some(val) => Some((idx, val.send(message_wrapped.clone()))),
                             None => None
                         }).map(|(idx, future)| async move { tokio::join!(futures::future::ok::<usize, usize>(idx), future) });
+                        // this bottlenecks all clients on the slowest client, after buffering. how much buffer should there be in send-to-client?
+                        // lauren you're overthinking this it's an editor client
                         join_all(futures).await
                     };
                     for (idx, val) in result.iter() {
@@ -158,7 +201,7 @@ pub(crate) async fn run_websocket(
             .send(local_send)
             .await
             .expect("Subscribing to write messages failed");
-        accept_connection(socket, local_recv).await;
+        accept_connection(socket, local_recv, recvchan_send.clone()).await;
     }
 }
 

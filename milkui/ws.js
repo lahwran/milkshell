@@ -193,7 +193,7 @@ export function WSProvider({url, children}) {
 
   const api = useMemo(() => ({
     send(stream_id, message) {
-      send({...message, stream_id})
+      send({message, stream_id})
     },
     subscribe(key, handlerRef) {
       // must be called exactly once from a useEvent(), and its return value returned

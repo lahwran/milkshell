@@ -6,21 +6,13 @@ extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
-#[macro_use]
-extern crate lazy_static;
-extern crate regex;
-extern crate serde_json;
 use serde_json::json;
 use std::fmt::Write;
 
 use tokio;
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 
 extern crate unindent;
-
-use unindent::unindent;
-
-use regex::Regex;
 
 use pest::iterators::Pair;
 use pest::Parser;
@@ -29,23 +21,25 @@ use pest::Parser;
 #[grammar = "milkshell.pest"]
 pub struct MilkshellParser;
 
-use crate::ArgumentValue::{CommandReference, LanguageBlock, PlainString, VariableReference};
-use crate::Env::{Javascript, Python};
-use crate::SharedInvocationPipe::StandardIn;
-use futures::Future;
+//use crate::ArgumentValue::{CommandReference, LanguageBlock, PlainString, VariableReference};
+//use crate::Env::{Javascript, Python};
+//use crate::SharedInvocationPipe::StandardIn;
+use futures::Stream;
+use futures::StreamExt;
 use std::error::Error;
 use std::fs::File;
+use std::io;
 use std::path::Path;
 use std::{fs, iter};
-use std::{io, thread, time};
 
+use async_std::pin::Pin;
 use futures::future::join_all;
+use futures::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use tokio::runtime::Runtime;
 
-mod multiplexer;
-mod ws;
-
+//mod multiplexer;
+//mod ws;
+/*
 // one possible implementation of walking a directory only visiting files
 fn visit_dirs(dir: &Path, cb: &dyn Fn(&Path)) -> io::Result<()> {
     if dir.is_dir() {
@@ -622,30 +616,86 @@ async fn asyncmain() {
         side_effect_run_pipeline(pipeline).await;
     }
     println!("compile result: {:?}", &res)
+}*/
+
+struct Reduce<A, S: Stream<Item = A> + Unpin, T: Unpin + Clone> {
+    // F: Unpin + Fn(&T, A) -> T
+    stream: Pin<S>,
+    state: T,
+    //reducer_func: F,
+}
+impl<A, S: Stream<Item = A> + Unpin, T: Unpin + Clone> Unpin for Reduce<A, S, T> {}
+
+impl<A, S: Stream<Item = A> + Unpin, T: Unpin + Clone> Stream for Reduce<A, S, T> {
+    type Item = T;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>>
+    where
+        Self: Unpin,
+    {
+        let action = match self.get_mut().stream.poll_next(cx) {
+            Poll::Ready(Some(value)) => value,
+            other => return other,
+        };
+        //self.get_mut().state = ((*self).reducer_func)(&self.state, action);
+        Poll::Ready(Some(self.state.clone()))
+    }
 }
 
-async fn run_core(m: multiplexer::MultiHalf<serde_json::Value>) {
+//trait ReducerExt<A> {
+//    fn reducer<T: Unpin + Clone>(
+//        // , F: Unpin + Fn(&T, A) -> T
+//        self,
+//        initial_state: T,
+//        //reducer: F,
+//    ) -> Reduce<A, Self, T>
+//    where
+//        Self: Sized + ReducerExt<A> + Stream<Item = A> + Unpin,
+//    {
+//        Reduce {
+//            stream: self,
+//            state: initial_state,
+//            //reducer_func: reducer,
+//        }
+//    }
+//}
+//impl<St: ?Sized, A> ReducerExt<A> for St where St: Stream<Item = A> {}
+
+/*
+async fn run_core(mut m: multiplexer::MultiHalf<serde_json::Value>) {
     println!("launch core");
-    let (writer, reader) = m.get_stream("default").unwrap();
+    let (mut writer, mut reader) = m.get_stream("default", 10).await.unwrap();
+    tokio::spawn(async move {
+        loop {
+            let message = reader
+                .recv()
+                .await
+                .expect("multiplexer dropped our sender before us? wat?");
+            println!("Got message to default stream: {:?}", message);
+        }
+    });
     loop {
         println!("send... {:?}", Instant::now());
         writer
             .send(json!({"hello": "there", "it is": format!("{:?}", Instant::now())}))
-            .await;
+            .await
+            .expect("Write should always succeed I guess");
         println!("delay... {:?}", Instant::now());
         tokio::time::delay_for(Duration::from_secs(3)).await
     }
-}
+}*/
 
 #[tokio::main]
 async fn main() {
+    /*
     let (single, multi) = multiplexer::multiplexer(1, 1);
 
     tokio::spawn(async move {
         run_core(multi).await;
     });
     ws::run_websocket(single).await.unwrap()
-
+    */
+    tokio::time::delay_for(Duration::from_secs(1)).await;
     // multiplexer receives messages and sends them on to the appropriate channel
     // multiplexer has two parts:
     // 1. the sender, which goes to the websocket and contains the appropriate stream pair,
