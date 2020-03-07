@@ -109,6 +109,11 @@ struct MultiplexedMessage {
     message: serde_json::Value,
 }
 
+enum ShouldStop {
+    Stop,
+    Continue,
+}
+
 pub(crate) async fn run_websocket(
     single: SingleHalf<serde_json::Value>,
 ) -> Result<(), Box<dyn Error>> {
@@ -124,12 +129,17 @@ pub(crate) async fn run_websocket(
 
     tokio::spawn(async move {
         loop {
-            select! {
+            let should_stop = select! {
                 maybe_subscription = subscription_receiver.recv() => {
-                    let (name, maybe_sub) = maybe_subscription.expect("multihalf's subscription_sender was dropped, need websocket to shut down cleanly");
-                    match maybe_sub {
-                        Some(sub) => { subscriptions.insert(name, sub); },
-                        None => { subscriptions.remove(&name); }
+                    match maybe_subscription {
+                        Some((name, maybe_sub)) => match maybe_sub {
+                            Some(sub) => { subscriptions.insert(name, sub); ShouldStop::Continue },
+                            None => { subscriptions.remove(&name); ShouldStop::Continue }
+                        },
+                        None => {
+                            println!("multihalf's subscription_sender was dropped, need websocket to shut down cleanly");
+                            ShouldStop::Stop
+                        }
                     }
                 },
                 maybe_message = recvchan_recv.recv() => {
@@ -138,8 +148,15 @@ pub(crate) async fn run_websocket(
                     let subscriber = subscriptions.get_mut(&message.stream_id).expect("FIXME: Got message for subscriber that wasn't listening, this should be handled"); // TODO FIXME: this error can happen during normal functioning
                     // TODO: a sufficiently backed up stream can hang the multiplexer with backpressure. is this acceptable?
                     subscriber.send(message.message).await.expect("FIXME: sent message to subscriber that stopped listening while we were trying to send it");
+                    ShouldStop::Continue
                 }
-            }
+            };
+            match should_stop {
+                ShouldStop::Stop => {
+                    break;
+                }
+                ShouldStop::Continue => {}
+            };
         }
     });
 
@@ -205,6 +222,6 @@ pub(crate) async fn run_websocket(
     }
 }
 
-fn handle_client(stream: TcpStream) {}
+//fn handle_client(stream: TcpStream) {}
 
-pub fn net_test_main() {}
+//pub fn net_test_main() {}

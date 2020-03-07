@@ -61,7 +61,7 @@ impl<T> MultiHalf<T> {
         self.subscription_sender
             .send((stream.to_string(), Some(sender)))
             .await?;
-        let a = stream.to_string();
+        //let a = stream.to_string();
         Ok((
             SubstreamWrite {
                 name: stream.to_string(),
