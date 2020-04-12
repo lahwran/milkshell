@@ -123,7 +123,7 @@ fn codegen_python(si: &SharedInvocation) -> ConcreteSharedInvocation {
 
 pub(crate) fn codegen(si: &SharedInvocation) -> ConcreteSharedInvocation {
     match si.environment {
-        Python => codegen_python(si),
-        Javascript => codegen_javascript(si),
+        Env::Python => codegen_python(si),
+        Env::Javascript => codegen_javascript(si),
     }
 }

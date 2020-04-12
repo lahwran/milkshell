@@ -7,12 +7,15 @@ extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
-use serde::Deserialize;
+#[macro_use]
+extern crate assert_json_diff;
+
+use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 
-use futures::StreamExt;
 use futures::{Future, Stream};
-use serde_json::json;
+use futures::{FutureExt, StreamExt};
+use serde_json::{json, Value};
 use std::error::Error;
 
 use crate::launch::side_effect_run_pipeline;
@@ -23,8 +26,13 @@ use futures::future;
 use futures::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use crate::stream_scan::ReducerExt;
+use anyhow;
 
+use crate::codegen::codegen;
+use crate::multiplexer::SubstreamWrite;
+use crate::stream_scan::reducer_json;
+
+mod broadcast_replay;
 mod codegen;
 mod dir_scan;
 mod launch;
@@ -32,95 +40,115 @@ mod multiplexer;
 mod parse;
 mod stream_scan;
 mod ws;
-//mod stream_scan;
-//use stream_scan::*;
-
-/*
-from milkshell import receiver, output, check_pipeline
-
-def lb1(input):
-    <reindented input>
-
-def lb2(input):
-    <reindented input>
-
-async def main():
-    pipeline = input()
-
-    pipeline = lb1(pipeline)
-    check_pipeline(pipeline)
-
-    pipeline = lb2(pipeline)
-    check_pipeline(pipeline)
-
-    await output(pipeline)
-
-trio.run(main)
-*/
 
 // addr is an enum specifying how to connect
 // ideally could choose per process whether to connect as stream or as sink, where streams
 // launch_pipeline(Vec<f(input_source_addr, output_sink_addr, debug_socket_addr) -> supervision_handle>)
 
-async fn asyncmain() {
-    let res = compile(
-        parse(
-            r##"
-                map @py {
-                    v + 1
-                } | @py { import derp; print("hello") } around the world
-            "##,
-        )
-        .unwrap(),
-        Python,
-    )
-    .unwrap();
-    for pipeline in &res {
-        side_effect_run_pipeline(pipeline).await;
-    }
-    println!("compile result: {:?}", &res)
+// temporary function
+fn compile_ms(code: &str) -> Result<String, Box<dyn Error>> {
+    let parsed = parse(code);
+    let CHANGE_ME_SOON = Python;
+    let pipelines = compile(parsed.unwrap(), CHANGE_ME_SOON);
+    pipelines.iter().map(codegen).collect::<Vec<_>>().join("\n");
+
+    // TODO: need a linking step or we won't be able to pick connection methods efficiently... I think
+    Ok("".to_string())
+
+    // previusly in asyncmain, we did this:
+    /*
+        for pipeline in &res {
+            side_effect_run_pipeline(pipeline).await;
+        }
+    */
 }
 
-#[derive(Copy, Clone)]
-struct CoreState {}
+#[derive(Clone, Serialize, Debug)]
+enum CommandState {
+    Editing,
+    Running,
+}
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Debug)]
+struct CommandBoxState {
+    successful_parse: String,
+    typed_text: String,
+    state: CommandState,
+}
+
+#[derive(Clone, Serialize, Debug)]
+struct CoreState {
+    commands: Vec<CommandBoxState>,
+}
+
+// todo: fromoption<T>, provides FromOption::from_option(Option<T>) -> T which provides a default impl
+
+#[derive(Deserialize, Debug)]
 #[serde(tag = "type")]
-enum CoreAction {
+enum CoreRecvMsg {
     Disconnect,
+    // TODO: delta transmission for input? should be fairly easy
+    Input { idx: usize, value: String },
+    Run { idx: usize },
+}
+
+#[derive(Serialize, Debug)]
+#[serde(tag = "type", content = "value")]
+enum CoreSendMsg {
+    State(CoreState),
+    OtherMessage(i32),
+}
+
+fn core_reducer(mut state: CoreState, action: CoreRecvMsg) -> CoreState {
+    println!("Action: {:?}", action);
+    use CoreRecvMsg::*;
+    match action {
+        Input { idx, value } => {
+            let mut command = &mut state.commands[idx];
+            command.typed_text = value.clone();
+            command.successful_parse = value;
+        }
+        Run { idx } => {
+            let mut command = &mut state.commands[idx];
+            command.state = CommandState::Running;
+        }
+        other => {
+            println!("unhandled message type: {:?}", other);
+        }
+    };
+    state
 }
 
 async fn run_core(mut m: multiplexer::MultiHalf<serde_json::Value>) {
     println!("launch core");
-    let (mut _writer, reader) = m.get_stream("commandlist", 10).await.unwrap();
-    let _reader_task = reader
-        .reducer(CoreState {}, |state, maybe_action| {
-            println!("Action: {:?}", maybe_action);
-            let action = match maybe_action {
-                None => {
-                    println!("Received end-of-stream from client");
-                    return CoreState {};
-                }
+    let (mut writer, reader) = m.get_stream("_", 10).await.unwrap();
 
-                Some(serde_json::Value::Object(x)) => x,
-                Some(other) => panic!(format!("Received non-object: {:?}", other)),
-            };
-            match action
-                .get("type")
-                .expect("Missing action type")
-                .as_str()
-                .expect("action type isn't string")
-            {
-                "action" => CoreState {},
-                other => {
-                    println!("unhandled message type: {:?}", other);
-                    state
-                }
+    let initial_state = CoreState {
+        commands: vec![CommandBoxState {
+            successful_parse: "".to_string(),
+            typed_text: "".to_string(),
+            state: CommandState::Editing,
+        }],
+    };
+    writer
+        .send(serde_json::to_value(CoreSendMsg::State(initial_state.clone())).unwrap())
+        .await
+        .unwrap();
+    let mut states = reducer_json(reader, core_reducer, initial_state);
+
+    loop {
+        match states.next().await {
+            Some(state) => {
+                let derp: CoreSendMsg = CoreSendMsg::State(state);
+                writer
+                    .send(serde_json::to_value(derp).unwrap())
+                    .await
+                    .unwrap();
             }
-        })
-        .skip_while(|_| future::ready(true))
-        .next()
-        .await;
+            None => break,
+        }
+    }
+    //.forward(writer);
 }
 
 #[tokio::main]
@@ -132,21 +160,9 @@ async fn main() {
     });
     ws::run_websocket(single).await.unwrap();
 
-    tokio::time::delay_for(Duration::from_secs(1)).await;
-    // multiplexer receives messages and sends them on to the appropriate channel
-    // multiplexer has two parts:
-    // 1. the sender, which goes to the websocket and contains the appropriate stream pair,
-    //      as well as one additional stream: a Source<Tuple<String, Option<Sink<message>>>>. this will receive messages to associate streams with their io.
-    //      messages received over the websocket connection will be sent to the appropriate place, queueing them if necessary. (TODO: backpressure something or other)
-    // 2. the receiver, which goes to the core and contains the other stream pair, and which can return substream io pairs by name. when you do that,
-    //      it sends a (name, Some(Sink)) message with the write sink to the new streampair over the queue to the sender, and then it returns a struct that contains a copy
-    //      of the main sink for the websocket and the name of the stream. when sending messages, it wraps them into the name and the message, and sends them on.
-    //      (TODO: it may need a .close() method to get order of closes and drains right - you can't send a disconnect request on drop of the rx side, and there's a race condition with sending a drop just after a message sent to the tx side)
-    //      the receiver keeps track of which streams it's handed out and gets cranky if one is asked for while it's in use.
-    // the startup process:
-    // 1. create the multiplexer. this will require two channels set up as two stream pairs, and
-    //      a channel for the stream stream. it will produce a tuple of two structs.
-    // 2. pass the parts to the two ends - the core task and the websocket task.
+    // workaround for deadlock in test_core_init :sweat_smile:
+    //tokio::time::delay_for(Duration::from_secs(1)).await;
+
     // 3. in the core task, pull out the command list stream from the multiplexer. it allows appending and removing commands, and getting the count (?) of current commands.
     //      it only acts on message from the client, so simply iterate client incoming messages, update state, and send replies. maintain an array of the references for command handlers,
     //      and launch/shut down the command handlers when they're appended or deleted (or frozen?)
@@ -158,4 +174,164 @@ async fn main() {
 }
 
 #[cfg(test)]
-mod test {}
+mod test {
+    use super::*;
+
+    //#[tokio::test]
+    //async fn test_start_command() {
+    //    let (single, multi) = multiplexer::multiplexer(1, 1);
+    //    // workaround for deadlock - FIXME!
+    //    let joinhandle = tokio::spawn(async move {
+    //        tokio::time::timeout(Duration::from_millis(20), run_core(multi))
+    //            .await
+    //            .expect_err("core did not stay running")
+    //    });
+    //    let mut connector = broadcast_replay::launch_broadcasters(single);
+    //    let (mut input, mut output) = connector.connect().await;
+    //    output.recv().await.unwrap();
+    //    input
+    //        .send(json!({
+    //            "stream_id": "_",
+    //            "message": {
+    //                "type": "Input",
+    //                "value": "@py { print('test') } ",
+    //                "idx": 0
+    //            }
+    //        }))
+    //        .await
+    //        .unwrap();
+
+    //    output
+    //        .recv()
+    //        .await
+    //        .expect("should be a message confirming typing waiting");
+
+    //    input
+    //        .send(json!({
+    //            "stream_id": "_",
+    //            "message": {
+    //                "type": "Run",
+    //                "idx": 0
+    //            }
+    //        }))
+    //        .await
+    //        .unwrap();
+
+    //    let res = output.recv().await.unwrap();
+    //    let stream_id: String = res
+    //        .as_object()
+    //        .expect("1")
+    //        .get("message")
+    //        .expect("2")
+    //        .as_object()
+    //        .expect("3")
+    //        .get("value")
+    //        .expect("4")
+    //        .as_object()
+    //        .expect("5")
+    //        .get("commands")
+    //        .expect("6")
+    //        .as_array()
+    //        .expect("7")
+    //        .get(0)
+    //        .expect("8")
+    //        .as_object()
+    //        .expect("9")
+    //        .get("stream_id")
+    //        .expect("a")
+    //        .as_str()
+    //        .expect("b")
+    //        .to_string();
+
+    //    assert_json_include!(
+    //        actual: res,
+    //        expected: json!({
+    //            "message": {
+    //                "type": "State",
+    //                "value": {
+    //                    "commands": [{
+    //                        "successful_parse": "@py { print('test') } ",
+    //                        "typed_text": "@py { print('test') } ",
+    //                    }]
+    //                }
+    //            },
+    //            "stream_id": "_"
+    //        })
+    //    );
+
+    //    assert_json_eq!(
+    //        output.recv().await.unwrap(),
+    //        json!({
+    //            "message": "test",
+    //            "stream_id": stream_id
+    //        })
+    //    );
+
+    //    joinhandle.await.unwrap();
+    //}
+
+    #[test]
+    fn test_compile_python() {
+        assert_eq!(compile_ms("test").unwrap(), "out = test(inp())");
+        assert_eq!(compile_ms("test").unwrap(), "out = test(inp())");
+    }
+
+    #[tokio::test]
+    async fn test_parse_command() {
+        let (single, multi) = multiplexer::multiplexer(1, 1);
+        // workaround for deadlock - FIXME!
+        let joinhandle = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(20), run_core(multi))
+                .await
+                .expect_err("core did not stay running")
+        });
+        let mut connector = broadcast_replay::launch_broadcasters(single);
+        let (mut input, mut output) = connector.connect().await;
+        let first_message = output.recv().await.unwrap();
+
+        assert_json_include!(
+            actual: first_message,
+            expected: json!({
+                "stream_id": "_",
+                "message": {
+                    "type": "State",
+                    "value": {
+
+                    "commands": [{
+                        "typed_text": "",
+                    }]
+                    }
+                }
+            })
+        );
+
+        input
+            .send(json!({
+                "stream_id": "_",
+                "message": {
+                    "type": "Input",
+                    "value": "test",
+                    "idx": 0
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert_json_include!(
+            actual: output.recv().await.expect("a message should be waiting"),
+            expected: json!({
+                "message": {
+                    "type": "State",
+                    "value": {
+                        "commands": [{
+                            "typed_text": "test",
+                        }]
+                    }
+                },
+                "stream_id": "_"
+            })
+        );
+
+        joinhandle.await.unwrap();
+    }
+}

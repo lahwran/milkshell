@@ -132,22 +132,22 @@ export function useStreamReducer(name, reducer, initialState) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const handlers = useMemo(() => ({
     onMessage(message) {
-      dispatch({type: "receive", message})
+      dispatch({direction: "receive", ...message})
     },
     onClose(event) {
-      dispatch({type: "close", event})
+      dispatch({type: "stream:close", event})
     },
     onOpen(ts) {
-      dispatch({type: "open", ts})
+      dispatch({type: "stream:open", ts})
     },
     onError(event) {
-      dispatch({type: "error", event})
+      dispatch({type: "stream:error", event})
     }
   }), [dispatch])
   const {send, status} = useStream(name, handlers);
   return useMemo(() => (
-    [{...state, streamStatus: status}, ((message, extra) => {
-      dispatch({type: 'send', message, extra})
+    [{...state, streamStatus: status}, ((message) => {
+      dispatch({direction: 'send', ...message})
       send(message)
     })]
   ), [state, status, send])

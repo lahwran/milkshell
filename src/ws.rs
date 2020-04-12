@@ -1,5 +1,3 @@
-use serde::Deserialize;
-
 use std::error::Error;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -8,15 +6,13 @@ use tokio::sync::mpsc;
 
 use futures::{SinkExt, StreamExt};
 
+use crate::broadcast_replay;
 use crate::multiplexer::SingleHalf;
-use futures::future::join_all;
-use serde_json::json;
-use tokio::select;
 
 async fn accept_connection(
     stream: TcpStream,
-    mut receiver: mpsc::Receiver<::serde_json::Value>,
-    mut sender: mpsc::Sender<::serde_json::Value>,
+    mut in_sink: mpsc::Sender<::serde_json::Value>,
+    mut out_source: mpsc::Receiver<::serde_json::Value>,
 ) {
     let addr = stream
         .peer_addr()
@@ -71,7 +67,7 @@ async fn accept_connection(
                 // TODO ERROR: handle unknown message types
                 other => panic!(format!("Unknown message type: {:?}", other)),
             };
-            sender
+            in_sink
                 .send(parsed_message)
                 .await
                 .expect("incoming message receiver was somehow dropped by multiplexer, wat");
@@ -82,7 +78,7 @@ async fn accept_connection(
         // In a loop, read data from the socket and write the data back.
         loop {
             //let value = rx.recv().await.unwrap();
-            let message = match receiver.recv().await {
+            let message = match out_source.recv().await {
                 Some(pair) => pair,
                 None => return,
             };
@@ -103,104 +99,12 @@ async fn accept_connection(
     });
 }
 
-#[derive(Deserialize, Debug)]
-struct MultiplexedMessage {
-    stream_id: String,
-    message: serde_json::Value,
-}
-
-enum ShouldStop {
-    Stop,
-    Continue,
-}
-
 pub(crate) async fn run_websocket(
     single: SingleHalf<serde_json::Value>,
 ) -> Result<(), Box<dyn Error>> {
     let addr = "127.0.0.1:13579".to_string();
 
-    let SingleHalf {
-        mut subscription_receiver,
-        mut subscriptions,
-        mut receiver,
-    } = single;
-    let (mut subchan_send, mut subchan_recv) = mpsc::channel(10);
-    let (recvchan_send, mut recvchan_recv) = mpsc::channel(10);
-
-    tokio::spawn(async move {
-        loop {
-            let should_stop = select! {
-                maybe_subscription = subscription_receiver.recv() => {
-                    match maybe_subscription {
-                        Some((name, maybe_sub)) => match maybe_sub {
-                            Some(sub) => { subscriptions.insert(name, sub); ShouldStop::Continue },
-                            None => { subscriptions.remove(&name); ShouldStop::Continue }
-                        },
-                        None => {
-                            println!("multihalf's subscription_sender was dropped, need websocket to shut down cleanly");
-                            ShouldStop::Stop
-                        }
-                    }
-                },
-                maybe_message = recvchan_recv.recv() => {
-                    let maybe_message = serde_json::from_value(maybe_message.expect("recvchan_send was somehow dropped"));
-                    let message: MultiplexedMessage = maybe_message.expect("FIXME: Got invalid MultiplexedMessage from client"); // TODO: needs better error handling
-                    let subscriber = subscriptions.get_mut(&message.stream_id).expect("FIXME: Got message for subscriber that wasn't listening, this should be handled"); // TODO FIXME: this error can happen during normal functioning
-                    // TODO: a sufficiently backed up stream can hang the multiplexer with backpressure. is this acceptable?
-                    subscriber.send(message.message).await.expect("FIXME: sent message to subscriber that stopped listening while we were trying to send it");
-                    ShouldStop::Continue
-                }
-            };
-            match should_stop {
-                ShouldStop::Stop => {
-                    break;
-                }
-                ShouldStop::Continue => {}
-            };
-        }
-    });
-
-    // TODO: notify this task proactively when an unsubscription happens, rather than waiting for
-    //  it to handle errors writing to a stream?
-    tokio::spawn(async move {
-        let mut subs = Vec::new();
-        loop {
-            select! {
-                maybe_subscription = subchan_recv.recv() => {
-                    subs.push(Some(maybe_subscription.expect("subchan_send was somehow dropped")));
-                },
-                maybe_message = receiver.recv() => {
-                    let (stream_id, message) = match maybe_message {
-                        Some(m) => m,
-                        None => {
-                            println!("Multiplexer sender was dropped! no more messages.");
-                            return
-                        } // multiplexer sender was dropped
-                    };
-                    let message_wrapped = json!({
-                        "stream_id": stream_id,
-                        "message": message
-                    });
-                    let result = {
-                        let futures = subs.iter_mut().enumerate().filter_map(|(idx, x): (usize, &mut Option<mpsc::Sender<serde_json::Value>>)| match x {
-                            Some(val) => Some((idx, val.send(message_wrapped.clone()))),
-                            None => None
-                        }).map(|(idx, future)| async move { tokio::join!(futures::future::ok::<usize, usize>(idx), future) });
-                        // this bottlenecks all clients on the slowest client, after buffering. how much buffer should there be in send-to-client?
-                        // lauren you're overthinking this it's an editor client
-                        join_all(futures).await
-                    };
-                    for (idx, val) in result.iter() {
-                        let idx = idx.unwrap();
-                        if !val.is_ok() {
-                            println!(" -> Error sending message to stream, assuming it's gone.\n    error: {:?}\n    idx: {:?} streams: {:?}", val, idx, subs);
-                            subs[idx] = None;
-                        }
-                    }
-                }
-            }
-        }
-    });
+    let mut connector = broadcast_replay::launch_broadcasters(single);
 
     // Next up we create a TCP listener which will listen for incoming
     // connections. This TCP listener is bound to the address we determined
@@ -213,12 +117,8 @@ pub(crate) async fn run_websocket(
 
     loop {
         let (socket, _) = listener.accept().await?;
-        let (local_send, local_recv) = mpsc::channel(10);
-        subchan_send
-            .send(local_send)
-            .await
-            .expect("Subscribing to write messages failed");
-        accept_connection(socket, local_recv, recvchan_send.clone()).await;
+        let (out_source, in_sink) = connector.connect().await;
+        accept_connection(socket, out_source, in_sink).await;
     }
 }
 

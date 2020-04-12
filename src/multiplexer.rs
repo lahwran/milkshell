@@ -1,6 +1,15 @@
 use std::collections::HashMap;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
+pub(crate) enum ReplayPolicy {
+    All,
+    LastN(isize),
+    //LastMB(isize),
+    //LastTime(Duration),
+    //
+    Never,
+}
+
 pub(crate) struct SingleHalf<T> {
     pub subscription_receiver: Receiver<(String, Option<Sender<T>>)>,
     pub subscriptions: HashMap<String, Sender<T>>,
