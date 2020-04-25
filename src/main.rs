@@ -50,7 +50,7 @@ fn compile_ms(code: &str) -> Result<String, Box<dyn Error>> {
     let parsed = parse(code);
     let CHANGE_ME_SOON = Python;
     let pipelines = compile(parsed.unwrap(), CHANGE_ME_SOON);
-    let compiled = pipelines
+    let res = pipelines
         .unwrap()
         .into_iter()
         .map(|x| {
@@ -59,9 +59,9 @@ fn compile_ms(code: &str) -> Result<String, Box<dyn Error>> {
                 .collect::<String>()
         })
         .collect::<String>();
+    Ok(res)
 
     // TODO: need a linking step or we won't be able to pick connection methods efficiently... I think
-    Ok("".to_string())
 
     // previusly in asyncmain, we did this:
     /*
@@ -184,6 +184,7 @@ async fn main() {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::codegen::serialize_for_python_source;
 
     //#[tokio::test]
     //async fn test_start_command() {
@@ -280,8 +281,21 @@ mod test {
 
     #[test]
     fn test_compile_python() {
-        assert_eq!(compile_ms("test").unwrap(), "out = test(inp())");
-        assert_eq!(compile_ms("test").unwrap(), "out = test(inp())");
+        let parsed = parse("test");
+        let CHANGE_ME_SOON = Python;
+        let pipelines = compile(parsed.unwrap(), CHANGE_ME_SOON).unwrap();
+        assert_eq!(pipelines.len(), 1);
+        let res = pipelines
+            .into_iter()
+            .flat_map(|x| {
+                x.into_iter()
+                    .map(|(env, pipeline, inp, out)| serialize_for_python_source(pipeline))
+            })
+            .collect::<Vec<(String, String)>>();
+        assert_eq!(
+            res,
+            vec![("".to_string(), "    val = test(val)".to_string())]
+        );
     }
 
     #[tokio::test]

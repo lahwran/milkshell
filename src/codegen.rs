@@ -4,6 +4,7 @@ use crate::parse::ArgumentValue::{
 use crate::parse::{ArgumentValue, Env, Milkaddr, Pipeline, SharedInvocation};
 use std::fmt::Write;
 use std::{fs, iter};
+use unindent::unindent;
 
 fn codegen_javascript(
     env: Env,
@@ -44,10 +45,31 @@ fn strip_indent(code: &str) -> String {
     stripped
 }
 
+fn serialize_op_for_python_source(arg: &ArgumentValue, prelude: &mut String) -> String {
+    match arg {
+        PlainString(val) | CommandReference(val) => val.clone(),
+        VariableReference(val) => {
+            format!("milkshell.lookup_variable({})", escape_string_python(val))
+        }
+        LanguageBlock(code, _environ) => {
+            let name = format!("v{}", prelude.len());
+            write!(
+                prelude,
+                "@milk.language_block\ndef {}(seq):\n{}",
+                name,
+                strip_indent(code)
+            )
+            .expect("write failed");
+
+            name
+        }
+    }
+}
+
 fn serialize_argument_for_python_source(arg: &ArgumentValue, prelude: &mut String) -> String {
     match arg {
         PlainString(val) => escape_string_python(val),
-        CommandReference(val) => format!("milkshell.lookup_command({})", escape_string_python(val)),
+        CommandReference(val) => val.clone(),
         VariableReference(val) => {
             format!("milkshell.lookup_variable({})", escape_string_python(val))
         }
@@ -67,25 +89,28 @@ fn serialize_argument_for_python_source(arg: &ArgumentValue, prelude: &mut Strin
 }
 
 // TODO: move this into something serde/language target agnostic/host environment agnosting/etc
-fn serialize_for_python_source(ops: Vec<(ArgumentValue, Vec<ArgumentValue>)>) -> (String, String) {
+pub(crate) fn serialize_for_python_source(
+    ops: Vec<(ArgumentValue, Vec<ArgumentValue>)>,
+) -> (String, String) {
     let mut prelude = "".to_string();
-    let val = format!(
-        "({},)",
-        ops.iter()
-            .map(|(op, args)| {
-                format!(
-                    "({},)",
-                    iter::once(op)
-                        .chain(args.iter())
-                        .map(|x| serialize_argument_for_python_source(x, &mut prelude))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    return (prelude, val);
+
+    let val = ops
+        .iter()
+        .map(|(op, args)| {
+            format!(
+                "    val = {}({})",
+                serialize_op_for_python_source(op, &mut prelude),
+                iter::once(&CommandReference("val".to_string()))
+                    .chain(args.iter())
+                    .map(|x| serialize_argument_for_python_source(x, &mut prelude))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    (prelude, val)
 }
 
 fn codegen_python(
@@ -95,18 +120,23 @@ fn codegen_python(
     out: Option<Milkaddr>,
 ) -> String {
     let (prelude, default_command) = serialize_for_python_source(pipeline);
-    format!(
-        "\
-         import milkshell\n\
-         import trio\n\
-         import sys\n\n\
-         milk = milkshell.Module()\n\n\
-         {}\n\n\
-         milk.default_pipeline = {}\n\
-         if __name__ == '__main__': milk.main(sys.argv)\
+    unindent(&format!(
+        "
+         import milkshell
+         {prelude}
+         def default_pipeline(val):
+         {default_command}
+             return val
+         if __name__ == '__main__': milkshell.run(default_pipeline)
          ",
-        prelude, default_command
-    )
+        /*
+             inp, out_writer = milkshell.connect_pair(sys.argv[1], sys.argv[2])\n\
+             res = default_pipeline(inp)\n\
+             milkshell.sendall(res, out_writer)\n\
+        */
+        prelude = prelude,
+        default_command = default_command
+    ))
 }
 
 pub(crate) fn codegen(
