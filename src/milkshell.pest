@@ -213,7 +213,7 @@ python_block = { "@py" ~ _eat_ws ~ _block_start ~ python ~ _block_end }
 _block_start = _{ "{" }
 _block_end = _{ "}" }
 pipe = { "|" }
-word_separator = _{ pipe | _newline | _space | _block_start }
+word_separator = _{ pipe | _newline | _space | _block_start  }
 /// orange
 double_string_body = { (_backslash ~ _double_quote | !_double_quote ~ _string_char )* }
 double_string = { _double_quote ~ double_string_body ~ _double_quote ~ &word_separator }

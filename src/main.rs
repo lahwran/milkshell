@@ -3,6 +3,7 @@
 #![deny(unused_must_use)]
 #![allow(unused_imports)]
 
+use unindent::unindent;
 extern crate pest;
 #[macro_use]
 extern crate pest_derive;
@@ -46,30 +47,30 @@ mod ws;
 // launch_pipeline(Vec<f(input_source_addr, output_sink_addr, debug_socket_addr) -> supervision_handle>)
 
 // temporary function
-fn compile_ms(code: &str) -> Result<String, Box<dyn Error>> {
-    let parsed = parse(code);
-    let CHANGE_ME_SOON = Python;
-    let pipelines = compile(parsed.unwrap(), CHANGE_ME_SOON);
-    let res = pipelines
-        .unwrap()
-        .into_iter()
-        .map(|x| {
-            x.into_iter()
-                .map(|(env, pipeline, inp, out)| codegen(env, pipeline, inp, out))
-                .collect::<String>()
-        })
-        .collect::<String>();
-    Ok(res)
-
-    // TODO: need a linking step or we won't be able to pick connection methods efficiently... I think
-
-    // previusly in asyncmain, we did this:
-    /*
-        for pipeline in &res {
-            side_effect_run_pipeline(pipeline).await;
-        }
-    */
-}
+//fn compile_ms(code: &str) -> Result<String, Box<dyn Error>> {
+//    let parsed = parse(code);
+//    let CHANGE_ME_SOON = Python;
+//    let pipelines = compile(parsed.unwrap(), CHANGE_ME_SOON);
+//    let res = pipelines
+//        .unwrap()
+//        .into_iter()
+//        .map(|x| {
+//            x.into_iter()
+//                .map(|(env, pipeline, inp, out)| (env, codegen(env, pipeline, inp, out), inp, out))
+//                .collect::<(_, _, _, _)>()
+//        })
+//        .collect::<String>();
+//    Ok(res)
+//
+//    // TODO: need a linking step or we won't be able to pick connection methods efficiently... I think
+//
+//    // previusly in asyncmain, we did this:
+//    /*
+//        for pipeline in &res {
+//            side_effect_run_pipeline(pipeline).await;
+//        }
+//    */
+//}
 
 #[derive(Clone, Serialize, Debug)]
 enum CommandState {
@@ -185,6 +186,8 @@ async fn main() {
 mod test {
     use super::*;
     use crate::codegen::serialize_for_python_source;
+    use crate::parse::Milkaddr::StandardIn;
+    use crate::parse::{Env, Milkaddr, Pipeline};
 
     //#[tokio::test]
     //async fn test_start_command() {
@@ -278,25 +281,125 @@ mod test {
 
     //    joinhandle.await.unwrap();
     //}
+    #[test]
+    fn test_compile_python_2() {
+        let parsed = parse("test\nderp|hello|there\n|whee\nyay|hello");
+        let pipelines = compile(parsed.unwrap(), Python).unwrap();
+        println!("pipelines: {:?}", pipelines);
+        assert_eq!(pipelines.len(), 3);
+        let mapped = pipelines
+            .into_iter()
+            .map(|pipeline| {
+                pipeline
+                    .into_iter()
+                    .map(|(env, pipeline, inp, out)| {
+                        (env, codegen(env, pipeline, inp, out), inp, out)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<Vec<(Env, String, Option<Milkaddr>, Option<Milkaddr>)>>>();
+        assert_eq!(
+            mapped,
+            vec![
+                vec![(
+                    Python,
+                    unindent(
+                        "
+                        import milkshell
+
+                        def default_pipeline(val):
+                            val = test(val)
+                            return val
+                        if __name__ == '__main__': milkshell.run(default_pipeline)"
+                    ),
+                    Some(StandardIn),
+                    None
+                )],
+                vec![(
+                    Python,
+                    unindent(
+                        "
+                        import milkshell
+
+                        def default_pipeline(val):
+                            val = derp(val)
+                            val = hello(val)
+                            val = there(val)
+                            val = whee(val)
+                            return val
+                        if __name__ == '__main__': milkshell.run(default_pipeline)"
+                    ),
+                    Some(StandardIn),
+                    None
+                )],
+                vec![(
+                    Python,
+                    unindent(
+                        "
+                        import milkshell
+
+                        def default_pipeline(val):
+                            val = yay(val)
+                            val = hello(val)
+                            return val
+                        if __name__ == '__main__': milkshell.run(default_pipeline)"
+                    ),
+                    Some(StandardIn),
+                    None
+                )]
+            ]
+        );
+    }
 
     #[test]
     fn test_compile_python() {
-        let parsed = parse("test");
-        let CHANGE_ME_SOON = Python;
-        let pipelines = compile(parsed.unwrap(), CHANGE_ME_SOON).unwrap();
-        assert_eq!(pipelines.len(), 1);
+        let parsed = parse("test\nderp|hello|there\n|whee\nyay|hello");
+        let pipelines = compile(parsed.unwrap(), Python).unwrap();
+        println!("pipelines: {:?}", pipelines);
+        assert_eq!(pipelines.len(), 3);
         let res = pipelines
             .into_iter()
             .flat_map(|x| {
                 x.into_iter()
-                    .map(|(env, pipeline, inp, out)| serialize_for_python_source(pipeline))
+                    .map(|(_env, pipeline, _inp, _out)| serialize_for_python_source(pipeline))
             })
             .collect::<Vec<(String, String)>>();
         assert_eq!(
-            res,
-            vec![("".to_string(), "    val = test(val)".to_string())]
+            res.iter()
+                .map(|(x, y)| (x.as_str(), y.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("", "    val = test(val)"),
+                (
+                    "",
+                    "    val = derp(val)\n    val = hello(val)\n    val = there(val)\n    val = whee(val)"
+                ),
+                (
+                    "",
+                    "    val = yay(val)\n    val = hello(val)"
+                )
+            ]
         );
     }
+
+    //#[test]
+    //fn test_compile_python() {
+    //    let parsed = parse("test");
+    //    let CHANGE_ME_SOON = Python;
+    //    let pipelines = compile(parsed.unwrap(), CHANGE_ME_SOON).unwrap();
+    //    assert_eq!(pipelines.len(), 1);
+    //    let res = pipelines
+    //        .into_iter()
+    //        .flat_map(|x| {
+    //            x.into_iter()
+    //                .map(|(env, pipeline, inp, out)| serialize_for_python_source(pipeline))
+    //        })
+    //        .collect::<Vec<(String, String)>>();
+    //    assert_eq!(
+    //        res,
+    //        vec![("".to_string(), "    val = test(val)".to_string())]
+    //    );
+    //}
 
     #[tokio::test]
     async fn test_parse_command() {

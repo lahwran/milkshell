@@ -20,6 +20,7 @@ serde_json = "1.0"
 crossbeam = "0.7.3"
 
 anyhow = "1.0.28"
+indoc = "0.3"
 
 tokio = { version = "0.2.3", features = ["full"] }
 tokio-tungstenite = "*"

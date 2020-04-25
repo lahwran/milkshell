@@ -2,15 +2,16 @@ use crate::parse::ArgumentValue::{
     CommandReference, LanguageBlock, PlainString, VariableReference,
 };
 use crate::parse::{ArgumentValue, Env, Milkaddr, Pipeline, SharedInvocation};
+use indoc::indoc;
 use std::fmt::Write;
 use std::{fs, iter};
 use unindent::unindent;
 
 fn codegen_javascript(
-    env: Env,
-    pipeline: Pipeline,
-    inp: Option<Milkaddr>,
-    out: Option<Milkaddr>,
+    _env: Env,
+    _pipeline: Pipeline,
+    _inp: Option<Milkaddr>,
+    _out: Option<Milkaddr>,
 ) -> String {
     panic!("implement for js");
 }
@@ -114,21 +115,20 @@ pub(crate) fn serialize_for_python_source(
 }
 
 fn codegen_python(
-    env: Env,
+    _env: Env,
     pipeline: Pipeline,
-    inp: Option<Milkaddr>,
-    out: Option<Milkaddr>,
+    _inp: Option<Milkaddr>,
+    _out: Option<Milkaddr>,
 ) -> String {
     let (prelude, default_command) = serialize_for_python_source(pipeline);
-    unindent(&format!(
-        "
-         import milkshell
-         {prelude}
-         def default_pipeline(val):
-         {default_command}
-             return val
-         if __name__ == '__main__': milkshell.run(default_pipeline)
-         ",
+    format!(
+        "\
+import milkshell
+{prelude}
+def default_pipeline(val):
+{default_command}
+    return val
+if __name__ == '__main__': milkshell.run(default_pipeline)",
         /*
              inp, out_writer = milkshell.connect_pair(sys.argv[1], sys.argv[2])\n\
              res = default_pipeline(inp)\n\
@@ -136,7 +136,7 @@ fn codegen_python(
         */
         prelude = prelude,
         default_command = default_command
-    ))
+    )
 }
 
 pub(crate) fn codegen(

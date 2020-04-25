@@ -45,7 +45,7 @@ pub(crate) enum Env {
     Python,
     Javascript,
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum Milkaddr {
     StandardIn,
     StandardOut,
