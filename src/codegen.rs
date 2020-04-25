@@ -1,23 +1,18 @@
 use crate::parse::ArgumentValue::{
     CommandReference, LanguageBlock, PlainString, VariableReference,
 };
-use crate::parse::{ArgumentValue, Env, SharedInvocation, SharedInvocationPipe};
+use crate::parse::{ArgumentValue, Env, Milkaddr, Pipeline, SharedInvocation};
 use std::fmt::Write;
 use std::{fs, iter};
 
-#[derive(Debug)]
-pub(crate) struct ConcreteSharedInvocation {
-    environment: Env,
-    pub(crate) code: String,
-    pipe_in: Option<SharedInvocationPipe>,
-    pipe_out: Option<SharedInvocationPipe>,
-}
-
-fn codegen_javascript(_si: &SharedInvocation) -> ConcreteSharedInvocation {
+fn codegen_javascript(
+    env: Env,
+    pipeline: Pipeline,
+    inp: Option<Milkaddr>,
+    out: Option<Milkaddr>,
+) -> String {
     panic!("implement for js");
 }
-
-fn gen_python_arg() {}
 
 // TODO: verify safety
 fn escape_string_python(s: &str) -> String {
@@ -72,17 +67,16 @@ fn serialize_argument_for_python_source(arg: &ArgumentValue, prelude: &mut Strin
 }
 
 // TODO: move this into something serde/language target agnostic/host environment agnosting/etc
-fn serialize_for_python_source(si: &SharedInvocation) -> (String, String) {
+fn serialize_for_python_source(ops: Vec<(ArgumentValue, Vec<ArgumentValue>)>) -> (String, String) {
     let mut prelude = "".to_string();
     let val = format!(
         "({},)",
-        si.ops
-            .iter()
-            .map(|op| {
+        ops.iter()
+            .map(|(op, args)| {
                 format!(
                     "({},)",
-                    iter::once(&op.operator)
-                        .chain(op.arguments.iter())
+                    iter::once(op)
+                        .chain(args.iter())
                         .map(|x| serialize_argument_for_python_source(x, &mut prelude))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -94,14 +88,14 @@ fn serialize_for_python_source(si: &SharedInvocation) -> (String, String) {
     return (prelude, val);
 }
 
-fn codegen_python(si: &SharedInvocation) -> ConcreteSharedInvocation {
-    let (prelude, default_command) = serialize_for_python_source(si);
-    for (_idx, op) in si.ops.iter().enumerate() {
-        for (_arg_idx, _arg) in op.arguments.iter().enumerate() {
-            gen_python_arg();
-        }
-    }
-    let code = format!(
+fn codegen_python(
+    env: Env,
+    pipeline: Pipeline,
+    inp: Option<Milkaddr>,
+    out: Option<Milkaddr>,
+) -> String {
+    let (prelude, default_command) = serialize_for_python_source(pipeline);
+    format!(
         "\
          import milkshell\n\
          import trio\n\
@@ -112,18 +106,17 @@ fn codegen_python(si: &SharedInvocation) -> ConcreteSharedInvocation {
          if __name__ == '__main__': milk.main(sys.argv)\
          ",
         prelude, default_command
-    );
-    ConcreteSharedInvocation {
-        environment: si.environment,
-        code,
-        pipe_in: si.pipe_in,
-        pipe_out: si.pipe_out,
-    }
+    )
 }
 
-pub(crate) fn codegen(si: &SharedInvocation) -> ConcreteSharedInvocation {
-    match si.environment {
-        Env::Python => codegen_python(si),
-        Env::Javascript => codegen_javascript(si),
+pub(crate) fn codegen(
+    env: Env,
+    pipeline: Pipeline,
+    inp: Option<Milkaddr>,
+    out: Option<Milkaddr>,
+) -> String {
+    match &env {
+        Env::Python => codegen_python(env, pipeline, inp, out),
+        Env::Javascript => codegen_javascript(env, pipeline, inp, out),
     }
 }

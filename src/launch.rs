@@ -26,17 +26,18 @@ fn tempfile(code: &str, idx: usize, ext: &str) -> String {
         .to_string()
 }
 
-pub(crate) async fn side_effect_run_pipeline(pipeline: &Vec<SharedInvocation>) {
+pub(crate) async fn side_effect_run_pipeline(pipeline: Vec<SharedInvocation>) {
     let launched_processes = pipeline
-        .iter()
-        .map(codegen)
+        .into_iter()
+        .map(|(env, pipeline, inp, out)| (env, codegen(env, pipeline, inp, out), inp, out))
         .enumerate()
-        .map(|(idx, code)| {
+        .map(|(idx, (_, code, _, _))| {
             let debug_connector = "json:newlines:fd:5,6";
             let previous_connector = "json:newlines:fd:3";
             let next_connector = "json:newlines:fd:4";
-            let filename = tempfile(&code.code, idx, ".py");
+            let filename = tempfile(&code, idx, ".py");
             let cmd = "default";
+
             println!(
                 "running: <python> {:?} {:?} {:?} {:?} {:?}",
                 filename, cmd, previous_connector, next_connector, debug_connector

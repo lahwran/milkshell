@@ -40,32 +40,22 @@ pub(crate) enum ArgumentValue {
     PlainString(String),
 }
 
-// todo: replace with typed things
-#[derive(Debug)]
-pub(crate) struct Op {
-    pub(crate) operator: ArgumentValue,
-    pub(crate) arguments: Vec<ArgumentValue>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Env {
     Python,
     Javascript,
 }
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum SharedInvocationPipe {
+pub(crate) enum Milkaddr {
     StandardIn,
     StandardOut,
     InternalConnection,
     IPC,
 }
-#[derive(Debug)]
-pub(crate) struct SharedInvocation {
-    pub(crate) environment: Env,
-    pub(crate) ops: Vec<Op>,
-    pub(crate) pipe_in: Option<SharedInvocationPipe>,
-    pub(crate) pipe_out: Option<SharedInvocationPipe>,
-}
+
+pub(crate) type Pipeline = Vec<(ArgumentValue, Vec<ArgumentValue>)>;
+
+pub(crate) type SharedInvocation = (Env, Pipeline, Option<Milkaddr>, Option<Milkaddr>);
 
 fn prepare_double_string(double_string: Pair<Rule>, _env: Env) -> (ArgumentValue, Option<Env>) {
     // TODO: parse, extract, process dynamic values in double strings (...maybe)
@@ -140,7 +130,7 @@ fn prepare_argument(token: Pair<Rule>, env: Env) -> (ArgumentValue, Option<Env>)
 // plot { milkshell expression on x }
 // plot @py { python expression on x }
 // plot
-fn prepare_command(command: Pair<Rule>, env: Env) -> (Op, Env) {
+fn prepare_command(command: Pair<Rule>, env: Env) -> (ArgumentValue, Vec<ArgumentValue>, Env) {
     let mut inner = command.into_inner();
     let (operator, new_env) = prepare_operator(
         inner
@@ -149,7 +139,7 @@ fn prepare_command(command: Pair<Rule>, env: Env) -> (Op, Env) {
             .into_inner()
             .next()
             .unwrap(),
-        env,
+        env.clone(),
     );
     let mut arguments = Vec::new();
     let mut resulting_env = match new_env {
@@ -165,42 +155,28 @@ fn prepare_command(command: Pair<Rule>, env: Env) -> (Op, Env) {
                 y
             }
             (_, Some(y)) => y,
-            _ => resulting_env,
+            _ => resulting_env.clone(),
         };
         arguments.push(arg);
     }
-    let op = Op {
-        operator,
-        arguments,
-    };
-    (op, resulting_env)
+    (operator, arguments, resulting_env)
 }
 
 fn prepare_pipeline(pipeline: Pair<Rule>, env: Env) -> Vec<SharedInvocation> {
     // TODO: environment configuration blocks and directives
     let mut grouped: Vec<SharedInvocation> = Vec::new();
-    grouped.push(SharedInvocation {
-        environment: env,
-        ops: Vec::new(),
-        pipe_in: Some(SharedInvocationPipe::StandardIn), // TODO: allow marking commands as "no input" somehow, to avoid opening stdin unnecessarily
-        pipe_out: None, // TODO: ditto - avoid opening stdout unnecessarily
-    });
+    grouped.push(((&env).clone(), Vec::new(), Some(Milkaddr::StandardIn), None));
     // TODO: we might actually want to require explicitly changing default languages rather than implicit on using a non default language
     for pair in pipeline.into_inner() {
         //println!("     => pipeline item: {}", pair);
         match pair.as_rule() {
             Rule::command => {
-                let (op, new_env) = prepare_command(pair, env);
+                let (op, args, new_env) = prepare_command(pair, env);
                 if new_env != env {
-                    grouped.last_mut().unwrap().pipe_out = Some(SharedInvocationPipe::IPC);
-                    grouped.push(SharedInvocation {
-                        environment: new_env,
-                        ops: Vec::new(),
-                        pipe_in: Some(SharedInvocationPipe::IPC), // TODO: allow marking commands as "no input" somehow, to avoid opening stdin unnecessarily
-                        pipe_out: None, // TODO: ditto - avoid opening stdout unnecessarily
-                    })
+                    grouped.last_mut().unwrap().3 = Some(Milkaddr::IPC);
+                    grouped.push((new_env.clone(), Vec::new(), Some(Milkaddr::IPC), None));
                 }
-                grouped.last_mut().unwrap().ops.push(op);
+                grouped.last_mut().unwrap().1.push((op, args));
             }
             Rule::pipe => {
                 // process more complex pipes

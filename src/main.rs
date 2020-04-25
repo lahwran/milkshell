@@ -50,7 +50,15 @@ fn compile_ms(code: &str) -> Result<String, Box<dyn Error>> {
     let parsed = parse(code);
     let CHANGE_ME_SOON = Python;
     let pipelines = compile(parsed.unwrap(), CHANGE_ME_SOON);
-    pipelines.iter().map(codegen).collect::<Vec<_>>().join("\n");
+    let compiled = pipelines
+        .unwrap()
+        .into_iter()
+        .map(|x| {
+            x.into_iter()
+                .map(|(env, pipeline, inp, out)| codegen(env, pipeline, inp, out))
+                .collect::<String>()
+        })
+        .collect::<String>();
 
     // TODO: need a linking step or we won't be able to pick connection methods efficiently... I think
     Ok("".to_string())
