@@ -17,16 +17,20 @@ fn tempfile(code: &str, idx: usize, ext: &str) -> String {
     // TODO: manage deletion of tempfiles better - to start with, do it at all, eg after successful run?
     fs::create_dir_all("temp").expect("Creating dir failed");
     let filename = format!("temp/codegen_{}{}", idx, ext);
-    let p = Path::new(&filename).canonicalize().unwrap();
+    let p = Path::new(&filename);
     let mut f = File::create(&p).expect("Creating tempfile failed");
     f.write_all(code.as_bytes())
         .expect("writing to file failed");
-    p.to_str()
+    p.canonicalize()
+        .unwrap()
+        .to_str()
         .expect("Could not convert filename to utf-8 string")
         .to_string()
 }
 
-pub(crate) async fn side_effect_run_pipeline(pipeline: Vec<SharedInvocation>) {
+pub(crate) async fn side_effect_run_pipeline(
+    pipeline: Vec<SharedInvocation>,
+) -> std::result::Result<std::vec::Vec<std::process::ExitStatus>, std::io::Error> {
     let launched_processes = pipeline
         .into_iter()
         .map(|(env, pipeline, inp, out)| (env, codegen(env, pipeline, inp, out), inp, out))
@@ -39,8 +43,8 @@ pub(crate) async fn side_effect_run_pipeline(pipeline: Vec<SharedInvocation>) {
             let cmd = "default";
 
             println!(
-                "running: <python> {:?} {:?} {:?} {:?} {:?}",
-                filename, cmd, previous_connector, next_connector, debug_connector
+                "running: {:?} {:?} {:?} {:?} {:?} {:?}",
+                PYTHON_BIN, filename, cmd, previous_connector, next_connector, debug_connector
             );
             // TODO: open fds 3:w,4:r,5:w,6:r as pipes, like one normally would with fds 0:w,1:r,2:r
 
@@ -55,7 +59,8 @@ pub(crate) async fn side_effect_run_pipeline(pipeline: Vec<SharedInvocation>) {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    join_all(launched_processes).await;
+    let a: Result<Vec<_>, _> = join_all(launched_processes).await.into_iter().collect();
+    a
 
     //println!("run:\n{:?}", collected);
     // 0. determine connection strategy, generate link instructions

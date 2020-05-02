@@ -243,3 +243,12 @@ class Module:
 
     def run_default_command(self, stdin, stdout):
         raise NotImplementedError("No default command")
+
+
+def stdin():
+    return []
+
+def write_stdout(stream):
+    if not stream: return
+    for x in stream:
+        print(str(x))

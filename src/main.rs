@@ -10,6 +10,7 @@ extern crate pest_derive;
 
 #[macro_use]
 extern crate assert_json_diff;
+use rand::Rng;
 
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -283,10 +284,19 @@ mod test {
     //}
     #[test]
     fn test_compile_python_2() {
-        let parsed = parse("test\nderp|hello|there\n|whee\nyay|hello");
+        let formatted = unindent(
+            "
+                test
+                derp|hello|there
+                |whee
+                yay|hello
+                @py { return i_am_a_dummy_language_block(val)} | command
+            ",
+        );
+        let parsed = parse(formatted.as_str());
         let pipelines = compile(parsed.unwrap(), Python).unwrap();
         println!("pipelines: {:?}", pipelines);
-        assert_eq!(pipelines.len(), 3);
+        assert_eq!(pipelines.len(), 4);
         let mapped = pipelines
             .into_iter()
             .map(|pipeline| {
@@ -310,7 +320,7 @@ mod test {
                         def default_pipeline(val):
                             val = test(val)
                             return val
-                        if __name__ == '__main__': milkshell.run(default_pipeline)"
+                        if __name__ == '__main__': milkshell.write_stdout(default_pipeline(milkshell.stdin()))\n"
                     ),
                     Some(StandardIn),
                     None
@@ -327,7 +337,7 @@ mod test {
                             val = there(val)
                             val = whee(val)
                             return val
-                        if __name__ == '__main__': milkshell.run(default_pipeline)"
+                        if __name__ == '__main__': milkshell.write_stdout(default_pipeline(milkshell.stdin()))"
                     ),
                     Some(StandardIn),
                     None
@@ -342,13 +352,68 @@ mod test {
                             val = yay(val)
                             val = hello(val)
                             return val
-                        if __name__ == '__main__': milkshell.run(default_pipeline)"
+                        if __name__ == '__main__': milkshell.write_stdout(default_pipeline(milkshell.stdin()))\n"
+                    ),
+                    Some(StandardIn),
+                    None
+                )],
+                vec![(
+                    Python,
+                    unindent(
+                        "
+                        import milkshell
+
+                        def v0(val):
+                            return i_am_a_dummy_language_block(val)
+
+                        def default_pipeline(val):
+                            val = v0(val)
+                            val = command(val)
+                            return val
+                        if __name__ == '__main__': milkshell.write_stdout(default_pipeline(milkshell.stdin()))\n"
                     ),
                     Some(StandardIn),
                     None
                 )]
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_run_python() {
+        use std::fs;
+
+        let mut rng = rand::thread_rng();
+        let n2: u16 = rng.gen();
+        let formatted = format!("@py {{ return ({} for x in range(10)) }} | @py {{ open('/tmp/milkshell_test_out', 'w').write(''.join(str(v) + '\\n' for v in val)) }}", n2);
+        let parsed = parse(formatted.as_str()).unwrap();
+        let compiled = compile(parsed, Env::Python).unwrap();
+
+        let _deleted = fs::remove_file("/tmp/milkshell_test_out").is_ok();
+
+        for pipeline in compiled {
+            side_effect_run_pipeline(pipeline).await.unwrap();
+        }
+        let result = fs::read_to_string("/tmp/milkshell_test_out").unwrap();
+        assert_eq!(result, format!("{}\n", n2).repeat(10));
+        let _deleted = fs::remove_file("/tmp/milkshell_test_out").is_ok();
+
+        // current code:
+        //let res = compile(
+        //    parse(
+        //        r##"
+        //            map @py {
+        //                v + 1
+        //            } | @py { import derp; print("hello") } around the world
+        //        "##,
+        //    )
+        //    .unwrap(),
+        //    Python,
+        //)
+        //.unwrap();
+        //for pipeline in &res {
+        //    side_effect_run_pipeline(pipeline);
+        //}
     }
 
     #[test]

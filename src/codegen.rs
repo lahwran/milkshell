@@ -54,13 +54,7 @@ fn serialize_op_for_python_source(arg: &ArgumentValue, prelude: &mut String) -> 
         }
         LanguageBlock(code, _environ) => {
             let name = format!("v{}", prelude.len());
-            write!(
-                prelude,
-                "@milk.language_block\ndef {}(seq):\n{}",
-                name,
-                strip_indent(code)
-            )
-            .expect("write failed");
+            write!(prelude, "\ndef {}(val):\n{}", name, strip_indent(code)).expect("write failed");
 
             name
         }
@@ -76,13 +70,7 @@ fn serialize_argument_for_python_source(arg: &ArgumentValue, prelude: &mut Strin
         }
         LanguageBlock(code, _environ) => {
             let name = format!("v{}", prelude.len());
-            write!(
-                prelude,
-                "@milk.language_block\ndef {}(seq):\n{}",
-                name,
-                strip_indent(code)
-            )
-            .expect("write failed");
+            write!(prelude, "\ndef {}(val):\n{}", name, strip_indent(code)).expect("write failed");
 
             name
         }
@@ -128,11 +116,13 @@ import milkshell
 def default_pipeline(val):
 {default_command}
     return val
-if __name__ == '__main__': milkshell.run(default_pipeline)",
+if __name__ == '__main__': milkshell.write_stdout(default_pipeline(milkshell.stdin()))",
         /*
              inp, out_writer = milkshell.connect_pair(sys.argv[1], sys.argv[2])\n\
              res = default_pipeline(inp)\n\
              milkshell.sendall(res, out_writer)\n\
+
+             def milkshell.run(pipeline): list(pipeline(None))
         */
         prelude = prelude,
         default_command = default_command
